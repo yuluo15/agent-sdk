@@ -35,7 +35,7 @@ public final class ScenarioRegistry {
                     throw new IllegalArgumentException("Duplicate tool in scenario: " + name);
                 }
             }
-            AgentSpec spec = new AgentSpec(plugin.id(), plugin.instructions(), names, limits, plugin.completionCheck());
+            AgentSpec spec = new AgentSpec(plugin.id(), plugin.instructions(), names, limits, plugin.completionCheck(), plugin.policy());
             if (plugin.description() == null || plugin.description().isBlank()
                     || entries.putIfAbsent(spec.id(), new Entry(plugin.description(), spec)) != null) {
                 throw new IllegalArgumentException("Invalid or duplicate scenario: " + spec.id());

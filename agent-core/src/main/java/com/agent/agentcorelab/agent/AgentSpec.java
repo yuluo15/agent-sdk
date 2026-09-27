@@ -8,8 +8,13 @@ public record AgentSpec(
         String instructions,
         Set<String> toolNames,
         RunLimits limits,
-        CompletionCheck completionCheck
+        CompletionCheck completionCheck,
+        ExecutionPolicy policy
 ) {
+    public AgentSpec(String id, String instructions, Set<String> toolNames, RunLimits limits, CompletionCheck completionCheck) {
+        this(id, instructions, toolNames, limits, completionCheck, ExecutionPolicy.strict());
+    }
+
     public AgentSpec {
         if (id == null || !id.matches("[a-z][a-z0-9-]{0,63}")
                 || instructions == null || instructions.isBlank()) {
@@ -17,6 +22,7 @@ public record AgentSpec(
         }
         Objects.requireNonNull(limits, "limits");
         Objects.requireNonNull(completionCheck, "completionCheck");
+        Objects.requireNonNull(policy, "policy");
         toolNames = Set.copyOf(toolNames);
     }
 }
