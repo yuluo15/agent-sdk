@@ -29,6 +29,10 @@ public final class ToolCatalog {
         return tool;
     }
 
+    public java.util.Optional<Tool> find(String name) {
+        return java.util.Optional.ofNullable(tools.get(name));
+    }
+
     public ToolCatalog select(Collection<String> allowedNames) {
         return new ToolCatalog(allowedNames.stream().sorted().map(this::require).toList());
     }

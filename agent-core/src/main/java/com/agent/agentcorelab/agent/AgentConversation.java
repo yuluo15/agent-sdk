@@ -5,6 +5,7 @@ import com.agent.agentcorelab.workspace.Workspace;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.function.Consumer;
 
 /**
  * A conversational session wrapper over {@link AgentRunner} that provides a natural,
@@ -53,8 +54,34 @@ public final class AgentConversation {
      * @param listener Consumer for streaming progress events, tool status, and tokens
      * @return The execution result of this turn
      */
-    public RunResult send(String message, java.util.function.Consumer<RunStreamChunk> listener) {
+    public RunResult send(String message, Consumer<RunStreamChunk> listener) {
         return runner.run(spec, new RunRequest(message, workspace), policy, listener);
+    }
+
+    /**
+     * Approves a pending high-risk action in this conversation.
+     */
+    public RunResult approve(String approvalId) {
+        return approve(approvalId, null);
+    }
+
+    public RunResult approve(String approvalId, Consumer<RunStreamChunk> listener) {
+        RunSnapshot snapshot = currentSnapshot().orElseThrow(() ->
+                new IllegalStateException("No active conversation to approve action"));
+        return runner.approve(snapshot.runId(), approvalId, listener);
+    }
+
+    /**
+     * Rejects a pending high-risk action in this conversation with an explanation.
+     */
+    public RunResult reject(String approvalId, String reason) {
+        return reject(approvalId, reason, null);
+    }
+
+    public RunResult reject(String approvalId, String reason, Consumer<RunStreamChunk> listener) {
+        RunSnapshot snapshot = currentSnapshot().orElseThrow(() ->
+                new IllegalStateException("No active conversation to reject action"));
+        return runner.reject(snapshot.runId(), approvalId, reason, listener);
     }
 
     /**
@@ -81,7 +108,7 @@ public final class AgentConversation {
         return reviseGoal(revisedBrief, null);
     }
 
-    public RunResult reviseGoal(TaskBrief revisedBrief, java.util.function.Consumer<RunStreamChunk> listener) {
+    public RunResult reviseGoal(TaskBrief revisedBrief, Consumer<RunStreamChunk> listener) {
         RunSnapshot snapshot = currentSnapshot().orElseThrow(() ->
                 new IllegalStateException("No active conversation to revise goal"));
         return runner.reviseGoal(snapshot.runId(), revisedBrief, listener);

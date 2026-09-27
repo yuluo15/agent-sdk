@@ -34,6 +34,7 @@ import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
@@ -53,25 +54,37 @@ import java.util.function.Consumer;
 import java.util.function.LongSupplier;
 
 public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
+    public static final int DEFAULT_MAX_ACTIVE_RUNS = 1000;
     private static final String RUNTIME_RULES = ExecutionPolicy.DEFAULT_RUNTIME_RULES;
+
     private final ModelGateway model;
     private final ToolCatalog tools;
     private final RunEventSink events;
     private final LongSupplier nanoTime;
+    private final int maxActiveRuns;
     private final ReentrantLock owner = new ReentrantLock();
     private final Map<UUID, State> runs = new ConcurrentHashMap<>();
     private volatile State current;
     private volatile boolean closed;
 
     public DefaultAgentRunner(ModelGateway model, ToolCatalog tools, RunEventSink events) {
-        this(model, tools, events, System::nanoTime);
+        this(model, tools, events, System::nanoTime, DEFAULT_MAX_ACTIVE_RUNS);
+    }
+
+    public DefaultAgentRunner(ModelGateway model, ToolCatalog tools, RunEventSink events, int maxActiveRuns) {
+        this(model, tools, events, System::nanoTime, maxActiveRuns);
     }
 
     DefaultAgentRunner(ModelGateway model, ToolCatalog tools, RunEventSink events, LongSupplier nanoTime) {
+        this(model, tools, events, nanoTime, DEFAULT_MAX_ACTIVE_RUNS);
+    }
+
+    DefaultAgentRunner(ModelGateway model, ToolCatalog tools, RunEventSink events, LongSupplier nanoTime, int maxActiveRuns) {
         this.model = model;
         this.tools = tools;
         this.events = events;
         this.nanoTime = nanoTime;
+        this.maxActiveRuns = maxActiveRuns > 0 ? maxActiveRuns : DEFAULT_MAX_ACTIVE_RUNS;
     }
 
     @Override
@@ -104,14 +117,14 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
                         throw new ActiveTaskConflictException(current.id, current.status, current.pending);
                     }
                     case PREEMPT_IF_WAITING -> {
-                        if (current.status == RunStatus.WAITING_INPUT) {
+                        if (current.status.isWaiting()) {
                             cancelWaiting(current, "PREEMPTED", "Task cancelled by preemption of a new task");
                         } else {
                             throw new ActiveTaskConflictException(current.id, current.status, current.pending);
                         }
                     }
                     case PREEMPT_AND_ABORT -> {
-                        if (current.status == RunStatus.WAITING_INPUT) {
+                        if (current.status.isWaiting()) {
                             cancelWaiting(current, "PREEMPTED", "Task cancelled by preemption of a new task");
                         } else {
                             current.cancelled.set(true);
@@ -123,9 +136,10 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
                     }
                 }
             }
+            ensureCapacity();
             ToolCatalog selected = resolveCatalog(agent);
             ToolExecutor executor = new ToolExecutor(selected, agent.limits().maxToolResultBytes());
-            State state = new State(agent, request, executor, effectivePolicy);
+            State state = new State(agent, request, executor, selected, effectivePolicy);
             runs.put(state.id, state);
             current = state;
             String rules = effectivePolicy.runtimeRules().orElse(ExecutionPolicy.DEFAULT_RUNTIME_RULES);
@@ -138,24 +152,112 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
                         : request.goal();
                 state.session = model.openSession(rules + "\n" + agent.instructions(), userPrompt,
                         selected.definitions());
-                event(state, RunEvent.Type.RUN_STARTED, Map.of("agentId", agent.id()));
-                if (listener != null) {
-                    listener.accept(RunStreamChunk.briefUpdated(state.taskBrief.goalVersion(), state.taskBrief.objective(), state.taskBrief.deliverables()));
-                }
+                event(state, RunEvent.Type.RUN_STARTED, Map.of("goal", request.goal(), "agentId", agent.id()));
             }, listener);
         } finally {
             unlockOwner();
         }
     }
 
-    @Override
-    public RunResult chat(AgentSpec agent, RunRequest request) {
-        return run(agent, request, ExecutionPolicy.conversational(), null);
+    private void ensureCapacity() {
+        if (runs.size() < maxActiveRuns) {
+            return;
+        }
+        pruneExpiredRuns();
+        if (runs.size() < maxActiveRuns) {
+            return;
+        }
+        List<State> terminalRuns = runs.values().stream()
+                .filter(s -> s.status.isTerminal())
+                .sorted(Comparator.comparing(s -> s.lastAccessedAt))
+                .toList();
+        for (State s : terminalRuns) {
+            runs.remove(s.id);
+            if (runs.size() < maxActiveRuns) {
+                return;
+            }
+        }
+        List<State> waitingRuns = runs.values().stream()
+                .filter(s -> s.status.isWaiting())
+                .sorted(Comparator.comparing(s -> s.lastAccessedAt))
+                .toList();
+        for (State s : waitingRuns) {
+            synchronized (s) {
+                cancelWaiting(s, "EVICTED", "Evicted to enforce capacity limit of " + maxActiveRuns);
+            }
+            runs.remove(s.id);
+            if (runs.size() < maxActiveRuns) {
+                return;
+            }
+        }
+        if (runs.size() >= maxActiveRuns) {
+            throw new IllegalStateException("Max active runs capacity reached (" + maxActiveRuns + ")");
+        }
+    }
+
+    private boolean checkWaitingTimeout(State state) {
+        if (state.status.isWaiting() && state.waitingSince != null) {
+            Duration elapsed = Duration.between(state.waitingSince, Instant.now());
+            if (elapsed.compareTo(state.spec.limits().waitingTimeout()) > 0) {
+                finish(state, RunStatus.STOPPED, "WAITING_TIMEOUT",
+                        "Run timed out after " + elapsed.toSeconds() + "s while waiting for " + state.status.name());
+                release(state);
+                emitFinished(state);
+                publish(state);
+                return true;
+            }
+        }
+        return false;
     }
 
     @Override
-    public RunResult chat(AgentSpec agent, RunRequest request, Consumer<RunStreamChunk> listener) {
-        return run(agent, request, ExecutionPolicy.conversational(), listener);
+    public int pruneExpiredRuns() {
+        int count = 0;
+        for (State state : runs.values()) {
+            if (state.status.isWaiting()) {
+                synchronized (state) {
+                    if (checkWaitingTimeout(state)) {
+                        count++;
+                    }
+                }
+            }
+        }
+        return count;
+    }
+
+    @Override
+    public int cleanupTerminatedRuns() {
+        int count = 0;
+        for (State state : runs.values()) {
+            if (state.status.isTerminal()) {
+                runs.remove(state.id);
+                count++;
+            }
+        }
+        return count;
+    }
+
+    @Override
+    public int activeRunCount() {
+        return runs.size();
+    }
+
+    @Override
+    public void closeRun(UUID runId) {
+        State state = runs.remove(runId);
+        if (state != null) {
+            if (!state.status.isTerminal()) {
+                cancelWaiting(state, "CLOSED", "Run closed explicitly");
+            }
+            if (state.resources != null) {
+                state.resources.close();
+            }
+        }
+    }
+
+    private long estimateTokens(String text) {
+        if (text == null || text.isBlank()) return 0;
+        return Math.max(1, text.length() / 4);
     }
 
     @Override
@@ -165,12 +267,14 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
 
     @Override
     public RunResult resume(UUID runId, String answer, Consumer<RunStreamChunk> listener) {
-        if (answer == null || answer.isBlank() || answer.length() > 16000) {
-            throw new IllegalArgumentException("Answer must contain between 1 and 16000 characters");
-        }
+        Objects.requireNonNull(answer, "answer");
         acquire();
         try {
             State state = require(runId);
+            state.lastAccessedAt = Instant.now();
+            if (checkWaitingTimeout(state)) {
+                return result(state);
+            }
             if (closed || state != current || state.status != RunStatus.WAITING_INPUT) {
                 throw new IllegalStateException("Only the pending question of the active task can be answered");
             }
@@ -185,6 +289,7 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
             ToolCall call = state.pendingCall;
             state.status = RunStatus.RUNNING;
             state.wasResumedFromClarification = true;
+            state.waitingSince = null;
             if (call != null) {
                 accept(state, call, new ToolOutcome.Success(ToolJson.write(Map.of(
                         "ok", true, "data", Map.of("answer", answer, "source", "current_user")))), listener);
@@ -201,11 +306,141 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
     }
 
     @Override
+    public RunResult approve(UUID runId, String approvalId, Consumer<RunStreamChunk> listener) {
+        Objects.requireNonNull(runId, "runId");
+        Objects.requireNonNull(approvalId, "approvalId");
+        acquire();
+        try {
+            State state = require(runId);
+            state.lastAccessedAt = Instant.now();
+            if (checkWaitingTimeout(state)) {
+                return result(state);
+            }
+            if (closed || state != current || state.status != RunStatus.WAITING_APPROVAL) {
+                throw new IllegalStateException("Only the pending approval of the active task can be approved");
+            }
+            if (state.pendingApproval == null || !approvalId.equals(state.pendingApproval.approvalId())) {
+                throw new IllegalArgumentException("Approval ID mismatch or expired: " + approvalId);
+            }
+            return doApprove(state, listener);
+        } finally {
+            unlockOwner();
+        }
+    }
+
+    private RunResult doApprove(State state, Consumer<RunStreamChunk> listener) {
+        return drive(state, () -> {
+            ToolCall call = state.pendingHighRiskCall;
+            List<ToolCall> calls = state.pendingHighRiskCalls;
+            int index = state.pendingHighRiskIndex;
+            String approvalId = state.pendingApproval != null ? state.pendingApproval.approvalId() : "";
+
+            state.status = RunStatus.RUNNING;
+            state.pendingApproval = null;
+            state.pendingHighRiskCall = null;
+            state.pendingHighRiskCalls = null;
+            state.waitingSince = null;
+
+            event(state, RunEvent.Type.APPROVAL_RESOLVED, Map.of(
+                    "approvalId", approvalId,
+                    "callId", call.callId(),
+                    "tool", call.name(),
+                    "decision", "APPROVED"
+            ));
+
+            event(state, RunEvent.Type.TOOL_STARTED, Map.of("callId", call.callId(), "tool", call.name(),
+                    "argumentsSha256", digest(call.argumentsJson())));
+            if (listener != null) {
+                listener.accept(RunStreamChunk.toolStarted(call.callId(), call.name(), Map.of("callId", call.callId())));
+            }
+            ToolContext context = new ToolContext(state.id, state.request.workspace(),
+                    Instant.now().plus(remaining(state)), state::isCancellationRequested,
+                    artifact -> state.artifacts.add(artifact), state.resources);
+            ToolOutcome outcome;
+            try {
+                outcome = state.executor.execute(call, context);
+            } catch (CancellationException | ActiveTimeExceededException ex) {
+                boolean cancelled = ex instanceof CancellationException;
+                event(state, RunEvent.Type.TOOL_FINISHED, Map.of("callId", call.callId(), "tool", call.name(),
+                        "outcome", cancelled ? "INTERRUPTED_CANCELLED" : "INTERRUPTED_ACTIVE_TIME_LIMIT"));
+                finish(state, cancelled ? RunStatus.CANCELLED : RunStatus.STOPPED,
+                        cancelled ? "CANCELLED" : "ACTIVE_TIME_LIMIT", "Tool interrupted by a runtime control condition");
+                return;
+            }
+            accept(state, call, outcome, listener);
+            if (controlledStop(state)) {
+                return;
+            }
+            if (calls != null && index + 1 < calls.size()) {
+                executeToolCalls(state, calls.subList(index + 1, calls.size()), listener);
+            }
+        }, listener);
+    }
+
+    @Override
+    public RunResult reject(UUID runId, String approvalId, String reason, Consumer<RunStreamChunk> listener) {
+        Objects.requireNonNull(runId, "runId");
+        Objects.requireNonNull(approvalId, "approvalId");
+        String rejectionReason = reason != null && !reason.isBlank() ? reason : "Action rejected by user";
+        acquire();
+        try {
+            State state = require(runId);
+            state.lastAccessedAt = Instant.now();
+            if (checkWaitingTimeout(state)) {
+                return result(state);
+            }
+            if (closed || state != current || state.status != RunStatus.WAITING_APPROVAL) {
+                throw new IllegalStateException("Only the pending approval of the active task can be rejected");
+            }
+            if (state.pendingApproval == null || !approvalId.equals(state.pendingApproval.approvalId())) {
+                throw new IllegalArgumentException("Approval ID mismatch or expired: " + approvalId);
+            }
+            return doReject(state, rejectionReason, listener);
+        } finally {
+            unlockOwner();
+        }
+    }
+
+    private RunResult doReject(State state, String rejectionReason, Consumer<RunStreamChunk> listener) {
+        return drive(state, () -> {
+            ToolCall call = state.pendingHighRiskCall;
+            List<ToolCall> calls = state.pendingHighRiskCalls;
+            int index = state.pendingHighRiskIndex;
+            String approvalId = state.pendingApproval != null ? state.pendingApproval.approvalId() : "";
+
+            state.status = RunStatus.RUNNING;
+            state.pendingApproval = null;
+            state.pendingHighRiskCall = null;
+            state.pendingHighRiskCalls = null;
+            state.waitingSince = null;
+
+            event(state, RunEvent.Type.APPROVAL_RESOLVED, Map.of(
+                    "approvalId", approvalId,
+                    "callId", call.callId(),
+                    "tool", call.name(),
+                    "decision", "REJECTED",
+                    "reason", rejectionReason
+            ));
+
+            ToolOutcome outcome = new ToolOutcome.Failure("ACTION_REJECTED",
+                    "User rejected action '" + call.name() + "': " + rejectionReason, false);
+            accept(state, call, outcome, listener);
+            if (calls != null && index + 1 < calls.size()) {
+                skipped(state, calls, index + 1);
+            }
+        }, listener);
+    }
+
+    @Override
     public RunResult reviseGoal(UUID runId, TaskBrief revisedBrief, Consumer<RunStreamChunk> listener) {
         Objects.requireNonNull(revisedBrief, "revisedBrief");
         acquire();
         try {
             State state = require(runId);
+            state.lastAccessedAt = Instant.now();
+            if (checkWaitingTimeout(state)) {
+                return result(state);
+            }
             if (closed || state != current || terminal(state.status)) {
                 throw new IllegalStateException("Only active or waiting tasks can have their goal revised");
             }
@@ -218,6 +453,7 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
     private RunResult doReviseGoal(State state, TaskBrief revisedBrief, Consumer<RunStreamChunk> listener) {
         return drive(state, () -> {
             state.status = RunStatus.RUNNING;
+            state.waitingSince = null;
             if (state.pendingCall != null) {
                 ToolCall call = state.pendingCall;
                 state.pending = null;
@@ -226,6 +462,23 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
                         "Question was superseded by user goal revision", false), listener);
             } else if (state.pending != null) {
                 state.pending = null;
+            }
+            if (state.pendingHighRiskCall != null) {
+                ToolCall call = state.pendingHighRiskCall;
+                String approvalId = state.pendingApproval != null ? state.pendingApproval.approvalId() : "";
+                state.pendingApproval = null;
+                state.pendingHighRiskCall = null;
+                state.pendingHighRiskCalls = null;
+                event(state, RunEvent.Type.APPROVAL_RESOLVED, Map.of(
+                        "approvalId", approvalId,
+                        "callId", call.callId(),
+                        "tool", call.name(),
+                        "decision", "SUPERSEDED"
+                ));
+                accept(state, call, new ToolOutcome.Failure("APPROVAL_SUPERSEDED",
+                        "High-risk action was superseded by user goal revision", false), listener);
+            } else if (state.pendingApproval != null) {
+                state.pendingApproval = null;
             }
             state.taskBrief = revisedBrief;
             state.currentGoal = revisedBrief.objective();
@@ -270,7 +523,7 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
         }
         if (owner.tryLock()) {
             try {
-                if (state.status == RunStatus.WAITING_INPUT) {
+                if (state.status.isWaiting()) {
                     cancelWaiting(state);
                 }
             } finally {
@@ -349,54 +602,56 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
                     }
                     String protocolError = protocolError(state, response);
                     if (protocolError != null) {
-                        finish(state, RunStatus.FAILED, protocolError, "Model returned an incomplete or invalid response");
+                        finish(state, RunStatus.FAILED, protocolError, "Model violated the tool calling protocol");
                         break;
                     }
                     event(state, RunEvent.Type.MODEL_FINISHED, Map.of("request", state.modelRequests,
-                            "finishReason", response.finishReason().name(), "toolCalls", response.toolCalls().size()));
+                            "finishReason", response.finishReason().name(), "outputTokens",
+                            response.usage().map(ModelResponse.TokenUsage::outputTokens).orElse(-1L)));
+                    if (controlledStop(state)) {
+                        break;
+                    }
                     if (!response.toolCalls().isEmpty()) {
-                        executeBatch(state, response.toolCalls(), listener);
+                        executeToolCalls(state, response.toolCalls(), listener);
                     } else {
                         complete(state, response.text(), listener);
                     }
                 }
             }
-        } catch (CancellationException ex) {
-            finish(state, RunStatus.CANCELLED, "CANCELLED", "Task cancelled");
-        } catch (ActiveTimeExceededException ex) {
-            finish(state, RunStatus.STOPPED, "ACTIVE_TIME_LIMIT", "Active processing time exhausted");
         } catch (WorkspaceException ex) {
-            finish(state, RunStatus.FAILED, ex.code(), ex.getMessage());
-        } catch (IOException | UncheckedIOException ex) {
-            failWithoutEvent(state, "STORAGE_FAILED", "Local storage is unavailable; no new actions will be scheduled");
+            finish(state, ex.terminal() ? RunStatus.FAILED : RunStatus.STOPPED, ex.code(), ex.getMessage());
+        } catch (IOException ex) {
+            finish(state, RunStatus.FAILED, "STORAGE_FAILED", "A workspace storage error occurred");
+        } catch (UncheckedIOException ex) {
+            finish(state, RunStatus.FAILED, "STORAGE_FAILED", "A workspace storage error occurred");
         } catch (RuntimeException ex) {
-            failWithoutEvent(state, "RUNTIME_FAILED", "Runtime could not continue safely");
+            finish(state, RunStatus.FAILED, "INTERNAL_ERROR", "Unexpected runtime error: " + ex.getMessage());
         } finally {
-            state.accumulatedNanos = elapsed(state);
             state.active = false;
+            state.accumulatedNanos += nanoTime.getAsLong() - state.startedAt;
             if (terminal(state.status)) {
                 release(state);
-                emitFinished(state);
             }
+            emitFinished(state);
             publish(state);
             if (listener != null) {
                 listener.accept(RunStreamChunk.statusChanged(state.status));
             }
         }
-        return new RunResult(state.snapshot, state.message, state.reason);
+        return result(state);
     }
 
-    private void executeBatch(State state, List<ToolCall> calls, Consumer<RunStreamChunk> listener) {
-        if (calls.size() > state.spec.limits().maxToolCalls() - state.toolCalls) {
-            finish(state, RunStatus.STOPPED, "MAX_TOOL_CALLS", "Entire tool batch exceeds the remaining budget");
+    private void executeToolCalls(State state, List<ToolCall> calls, Consumer<RunStreamChunk> listener) throws IOException {
+        if (state.toolCalls + calls.size() > state.spec.limits().maxToolCalls()) {
+            finish(state, RunStatus.STOPPED, "MAX_TOOL_CALLS", "Tool call budget exhausted");
             skipped(state, calls, 0);
             return;
         }
-        state.toolCalls += calls.size();
         state.wasResumedFromClarification = false;
         state.clarificationSubDialogueTurns = 0;
-        boolean mixed = calls.size() != 1 && calls.stream().anyMatch(call -> isControlTool(call.name()));
+        boolean mixed = calls.size() > 1 && calls.stream().anyMatch(c -> isControlTool(c.name()));
         for (int index = 0; index < calls.size(); index++) {
+            state.toolCalls++;
             ToolCall call = calls.get(index);
             if (controlledStop(state)) {
                 skipped(state, calls, index);
@@ -432,6 +687,8 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
                         state.lastPendingQuestion = state.pending;
                         state.status = RunStatus.WAITING_INPUT;
                         state.message = question;
+                        state.waitingSince = Instant.now();
+                        state.lastAccessedAt = Instant.now();
                         event(state, RunEvent.Type.WAITING_INPUT, Map.of("callId", call.callId()));
                         if (listener != null) {
                             listener.accept(RunStreamChunk.waitingInput(question, options));
@@ -507,6 +764,37 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
                     outcome = new ToolOutcome.Failure("INVALID_ARGUMENT", "Failed to parse updatePlan arguments: " + e.getMessage(), false);
                 }
             }
+            if (outcome == null && !ClarificationTool.NAME.equals(call.name()) && !UpdatePlanTool.NAME.equals(call.name())) {
+                Tool registeredTool = state.catalog.find(call.name()).orElse(null);
+                if (registeredTool != null && registeredTool.definition().isHighRisk()) {
+                    String approvalId = UUID.randomUUID().toString();
+                    String description = "High-risk action '" + call.name() + "' requires human approval.";
+                    ApprovalRequest req = new ApprovalRequest(approvalId, call.callId(), call.name(), call.argumentsJson(), description, Instant.now());
+                    synchronized (state) {
+                        if (controlledStop(state)) {
+                            return;
+                        }
+                        state.pendingApproval = req;
+                        state.pendingHighRiskCall = call;
+                        state.pendingHighRiskCalls = calls;
+                        state.pendingHighRiskIndex = index;
+                        state.status = RunStatus.WAITING_APPROVAL;
+                        state.message = description;
+                        state.waitingSince = Instant.now();
+                        state.lastAccessedAt = Instant.now();
+                        event(state, RunEvent.Type.APPROVAL_REQUESTED, Map.of(
+                                "approvalId", approvalId,
+                                "callId", call.callId(),
+                                "tool", call.name(),
+                                "argumentsSha256", digest(call.argumentsJson())
+                        ));
+                        if (listener != null) {
+                            listener.accept(RunStreamChunk.waitingApproval(req));
+                        }
+                    }
+                    return;
+                }
+            }
             if (outcome == null) {
                 event(state, RunEvent.Type.TOOL_STARTED, Map.of("callId", call.callId(), "tool", call.name(),
                         "argumentsSha256", digest(call.argumentsJson())));
@@ -521,7 +809,7 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
                 } catch (CancellationException | ActiveTimeExceededException ex) {
                     boolean cancelled = ex instanceof CancellationException;
                     event(state, RunEvent.Type.TOOL_FINISHED, Map.of("callId", call.callId(), "tool", call.name(),
-                            "outcome", cancelled ? "INTERRUPTED_CANCELLED" : "INTERRUPTED_ACTIVE_TIME_LIMIT"));
+                        "outcome", cancelled ? "INTERRUPTED_CANCELLED" : "INTERRUPTED_ACTIVE_TIME_LIMIT"));
                     finish(state, cancelled ? RunStatus.CANCELLED : RunStatus.STOPPED,
                             cancelled ? "CANCELLED" : "ACTIVE_TIME_LIMIT", "Tool interrupted by a runtime control condition");
                     skipped(state, calls, index + 1);
@@ -569,15 +857,12 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
         if (controlledStop(state)) {
             return;
         }
-        if (check.complete() && state.taskBrief != null) {
-            check = verifyTaskBriefDeliverables(state, check);
-            if (controlledStop(state)) {
-                return;
-            }
-        }
+
+        check = verifyTaskBriefDeliverables(state, check);
+
         if (check.complete()) {
             state.wasResumedFromClarification = false;
-            finish(state, RunStatus.COMPLETED, "COMPLETED", answer);
+            finish(state, RunStatus.COMPLETED, "COMPLETED", answer != null ? answer : "");
             return;
         }
 
@@ -607,6 +892,7 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
         if (state.corrections++ == 0) {
             state.session.appendRuntimeFeedback(ToolJson.write(Map.of("code", "INCOMPLETE_DELIVERABLE",
                     "feedback", check.feedback())));
+            event(state, RunEvent.Type.RUN_STARTED, Map.of("completionRepair", true, "feedback", check.feedback()));
         } else {
             finish(state, RunStatus.STOPPED, "INCOMPLETE_DELIVERABLE", check.feedback());
         }
@@ -682,6 +968,13 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
         return null;
     }
 
+    private void skipped(State state, List<ToolCall> calls, int from) {
+        for (int i = from; i < calls.size(); i++) {
+            event(state, RunEvent.Type.TOOL_FINISHED, Map.of("callId", calls.get(i).callId(),
+                    "tool", calls.get(i).name(), "outcome", "NOT_EXECUTED_" + state.status.name()));
+        }
+    }
+
     private boolean controlledStop(State state) {
         if (state.isCancellationRequested()) {
             finish(state, RunStatus.CANCELLED, "CANCELLED", "Task cancelled; existing artifacts were retained");
@@ -701,7 +994,7 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
                     status = RunStatus.CANCELLED;
                     reason = "CANCELLED";
                     message = "Task cancelled; existing artifacts were retained";
-                } else if (remaining(state).compareTo(Duration.ZERO) <= 0) {
+                } else if (remaining(state).isZero() || remaining(state).isNegative()) {
                     status = RunStatus.STOPPED;
                     reason = "ACTIVE_TIME_LIMIT";
                     message = "Active processing time exhausted";
@@ -712,6 +1005,12 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
             state.message = message;
             state.pending = null;
             state.pendingCall = null;
+            state.pendingApproval = null;
+            state.pendingHighRiskCall = null;
+            state.pendingHighRiskCalls = null;
+            if (state.resources != null) {
+                state.resources.cleanupTempFiles();
+            }
             publish(state);
         }
     }
@@ -744,18 +1043,15 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
         state.message = message;
         state.pending = null;
         state.pendingCall = null;
+        state.pendingApproval = null;
+        state.pendingHighRiskCall = null;
+        state.pendingHighRiskCalls = null;
+        publish(state);
     }
 
-    private void skipped(State state, List<ToolCall> calls, int from) {
-        for (int i = from; i < calls.size(); i++) {
-            event(state, RunEvent.Type.TOOL_FINISHED, Map.of("callId", calls.get(i).callId(),
-                    "tool", calls.get(i).name(), "outcome", "NOT_EXECUTED_" + state.status.name()));
-        }
-    }
-
-    private void event(State state, RunEvent.Type type, Map<String, ?> data) {
-        RunMetrics metrics = publish(state).metrics();
-        Map<String, Object> details = new java.util.LinkedHashMap<>(data);
+    private void event(State state, RunEvent.Type type, Map<String, Object> payload) {
+        Map<String, Object> details = new LinkedHashMap<>(payload);
+        RunMetrics metrics = state.snapshot.metrics();
         details.put("modelRequests", metrics.modelRequests());
         details.put("toolCalls", metrics.toolCalls());
         details.put("activeMillis", metrics.activeTime().toMillis());
@@ -773,7 +1069,8 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
                 new RunMetrics(state.modelRequests, state.toolCalls, Duration.ofNanos(elapsed(state)), usage),
                 Optional.ofNullable(state.pending),
                 Optional.ofNullable(state.taskBrief),
-                Optional.ofNullable(state.taskPlan));
+                Optional.ofNullable(state.taskPlan),
+                Optional.ofNullable(state.pendingApproval));
         return state.snapshot;
     }
 
@@ -792,8 +1089,13 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
         state.usageSamples++;
     }
 
+    private RunResult result(State state) {
+        return new RunResult(state.snapshot, state.message, state.reason);
+    }
+
     private long elapsed(State state) {
-        return state.accumulatedNanos + (state.active ? nanoTime.getAsLong() - state.startedAt : 0);
+        return state.active ? state.accumulatedNanos + (nanoTime.getAsLong() - state.startedAt)
+                : state.accumulatedNanos;
     }
 
     private Duration remaining(State state) {
@@ -841,7 +1143,7 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
         }
         synchronized (state) {
             try {
-                if (state.status == RunStatus.WAITING_INPUT && state.isCancellationRequested()) {
+                if (state.status.isWaiting() && state.isCancellationRequested()) {
                     cancelWaiting(state);
                 }
             } finally {
@@ -860,7 +1162,7 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
     }
 
     private static boolean terminal(RunStatus status) {
-        return status != RunStatus.RUNNING && status != RunStatus.WAITING_INPUT;
+        return status != RunStatus.RUNNING && !status.isWaiting();
     }
 
     private static Duration min(Duration left, Duration right) {
@@ -896,6 +1198,7 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
         private final AgentSpec spec;
         private final RunRequest request;
         private final ToolExecutor executor;
+        private final ToolCatalog catalog;
         private final ExecutionPolicy policy;
         private final AtomicBoolean cancelled = new AtomicBoolean();
         private final List<RunSnapshot.Observation> observations = new ArrayList<>();
@@ -908,6 +1211,12 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
         private PendingQuestion pending;
         private PendingQuestion lastPendingQuestion;
         private ToolCall pendingCall;
+        private ApprovalRequest pendingApproval;
+        private ToolCall pendingHighRiskCall;
+        private List<ToolCall> pendingHighRiskCalls;
+        private int pendingHighRiskIndex;
+        private Instant waitingSince;
+        private Instant lastAccessedAt = Instant.now();
         private String currentGoal;
         private boolean wasResumedFromClarification;
         private int clarificationSubDialogueTurns;
@@ -937,10 +1246,11 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
             return closed || cancelled.get() || request.cancellationRequested().getAsBoolean();
         }
 
-        private State(AgentSpec spec, RunRequest request, ToolExecutor executor, ExecutionPolicy policy) {
+        private State(AgentSpec spec, RunRequest request, ToolExecutor executor, ToolCatalog catalog, ExecutionPolicy policy) {
             this.spec = spec;
             this.request = request;
             this.executor = executor;
+            this.catalog = catalog;
             this.policy = policy;
             this.currentGoal = request.goal();
             this.taskBrief = request.initialBrief().orElseGet(() -> TaskBrief.of(request.goal()));

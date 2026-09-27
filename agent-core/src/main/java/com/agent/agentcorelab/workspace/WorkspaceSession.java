@@ -559,7 +559,24 @@ public final class WorkspaceSession implements AutoCloseable {
         return new WorkspaceException(code, message, terminal);
     }
 
+    public synchronized void cleanupTempFiles() {
+        if (workDirectory != null && Files.isDirectory(workDirectory)) {
+            try (DirectoryStream<Path> stream = Files.newDirectoryStream(workDirectory)) {
+                for (Path entry : stream) {
+                    try {
+                        Files.deleteIfExists(entry);
+                    } catch (IOException ignored) {
+                    }
+                }
+                Files.deleteIfExists(workDirectory);
+            } catch (IOException ignored) {
+            }
+        }
+        workItems.clear();
+    }
+
     @Override public synchronized void close() {
+        cleanupTempFiles();
         files.clear();
         names.clear();
         evidence.clear();

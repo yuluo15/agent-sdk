@@ -24,4 +24,11 @@ public interface ScenarioPlugin {
     default ExecutionPolicy policy() {
         return ExecutionPolicy.strict();
     }
+
+    /**
+     * Creates a new fluent builder for defining a {@link ScenarioPlugin}.
+     */
+    static ScenarioPluginBuilder builder(String id) {
+        return new ScenarioPluginBuilder(id);
+    }
 }

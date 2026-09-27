@@ -18,7 +18,8 @@ public record RunSnapshot(
         RunMetrics metrics,
         Optional<PendingQuestion> pendingQuestion,
         Optional<TaskBrief> taskBrief,
-        Optional<TaskPlan> taskPlan
+        Optional<TaskPlan> taskPlan,
+        Optional<ApprovalRequest> pendingApproval
 ) {
     public RunSnapshot(
             UUID runId,
@@ -31,7 +32,23 @@ public record RunSnapshot(
             Optional<PendingQuestion> pendingQuestion
     ) {
         this(runId, agentId, goal, status, observations, artifacts, metrics, pendingQuestion,
-                Optional.empty(), Optional.empty());
+                Optional.empty(), Optional.empty(), Optional.empty());
+    }
+
+    public RunSnapshot(
+            UUID runId,
+            String agentId,
+            String goal,
+            RunStatus status,
+            List<Observation> observations,
+            List<Artifact> artifacts,
+            RunMetrics metrics,
+            Optional<PendingQuestion> pendingQuestion,
+            Optional<TaskBrief> taskBrief,
+            Optional<TaskPlan> taskPlan
+    ) {
+        this(runId, agentId, goal, status, observations, artifacts, metrics, pendingQuestion,
+                taskBrief, taskPlan, Optional.empty());
     }
 
     public RunSnapshot {
@@ -39,6 +56,7 @@ public record RunSnapshot(
         artifacts = List.copyOf(artifacts != null ? artifacts : List.of());
         taskBrief = taskBrief != null ? taskBrief : Optional.empty();
         taskPlan = taskPlan != null ? taskPlan : Optional.empty();
+        pendingApproval = pendingApproval != null ? pendingApproval : Optional.empty();
     }
 
     public record Observation(ToolCall call, ToolOutcome outcome) {

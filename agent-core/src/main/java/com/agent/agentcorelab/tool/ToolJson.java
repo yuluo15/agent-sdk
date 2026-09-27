@@ -23,6 +23,10 @@ public final class ToolJson {
     private ToolJson() {
     }
 
+    public static ObjectMapper mapper() {
+        return MAPPER;
+    }
+
     public static JsonNode parse(String value) {
         if (value == null || value.length() > 65536) {
             throw new IllegalArgumentException("JSON is absent or too large");

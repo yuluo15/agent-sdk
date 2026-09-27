@@ -2,6 +2,7 @@ package com.agent.agentcorelab.agent;
 
 import java.util.Optional;
 import java.util.UUID;
+import java.util.function.Consumer;
 
 public interface AgentRunner {
 
@@ -21,14 +22,14 @@ public interface AgentRunner {
      * Executes a task with an explicit {@link ExecutionPolicy} override and a streaming listener for
      * real-time progress events, tool lifecycle, and model token chunks.
      */
-    default RunResult run(AgentSpec agent, RunRequest request, ExecutionPolicy policy, java.util.function.Consumer<RunStreamChunk> listener) {
+    default RunResult run(AgentSpec agent, RunRequest request, ExecutionPolicy policy, Consumer<RunStreamChunk> listener) {
         return run(agent, request);
     }
 
     /**
      * Executes a task using {@link AgentSpec#policy()} and a streaming listener.
      */
-    default RunResult run(AgentSpec agent, RunRequest request, java.util.function.Consumer<RunStreamChunk> listener) {
+    default RunResult run(AgentSpec agent, RunRequest request, Consumer<RunStreamChunk> listener) {
         return run(agent, request, agent.policy(), listener);
     }
 
@@ -45,13 +46,13 @@ public interface AgentRunner {
     /**
      * Executes in conversational mode with a streaming listener.
      */
-    default RunResult chat(AgentSpec agent, RunRequest request, java.util.function.Consumer<RunStreamChunk> listener) {
+    default RunResult chat(AgentSpec agent, RunRequest request, Consumer<RunStreamChunk> listener) {
         return run(agent, request, ExecutionPolicy.conversational(), listener);
     }
 
     RunResult resume(UUID runId, String answer);
 
-    default RunResult resume(UUID runId, String answer, java.util.function.Consumer<RunStreamChunk> listener) {
+    default RunResult resume(UUID runId, String answer, Consumer<RunStreamChunk> listener) {
         return resume(runId, answer);
     }
 
@@ -70,7 +71,60 @@ public interface AgentRunner {
         return reviseGoal(runId, revisedBrief, null);
     }
 
-    default RunResult reviseGoal(UUID runId, TaskBrief revisedBrief, java.util.function.Consumer<RunStreamChunk> listener) {
+    default RunResult reviseGoal(UUID runId, TaskBrief revisedBrief, Consumer<RunStreamChunk> listener) {
         throw new UnsupportedOperationException("Goal revision is not supported by this runner");
+    }
+
+    /**
+     * Approves a pending high-risk tool call, resuming execution to execute the tool and continue the loop.
+     */
+    default RunResult approve(UUID runId, String approvalId) {
+        return approve(runId, approvalId, null);
+    }
+
+    default RunResult approve(UUID runId, String approvalId, Consumer<RunStreamChunk> listener) {
+        throw new UnsupportedOperationException("Human-in-the-loop approval is not supported by this runner");
+    }
+
+    /**
+     * Rejects a pending high-risk tool call, feeding the user rejection reason back to the model as an error.
+     */
+    default RunResult reject(UUID runId, String approvalId, String reason) {
+        return reject(runId, approvalId, reason, null);
+    }
+
+    default RunResult reject(UUID runId, String approvalId, String reason, Consumer<RunStreamChunk> listener) {
+        throw new UnsupportedOperationException("Human-in-the-loop rejection is not supported by this runner");
+    }
+
+    /**
+     * Prunes runs that have exceeded their waiting TTL while waiting for input or approval.
+     *
+     * @return count of runs pruned
+     */
+    default int pruneExpiredRuns() {
+        return 0;
+    }
+
+    /**
+     * Cleans up terminal runs (COMPLETED, FAILED, CANCELLED, STOPPED) from memory.
+     *
+     * @return count of runs removed
+     */
+    default int cleanupTerminatedRuns() {
+        return 0;
+    }
+
+    /**
+     * Returns total count of active runs currently retained in the runner.
+     */
+    default int activeRunCount() {
+        return 0;
+    }
+
+    /**
+     * Explicitly closes and evicts a run and its resources from the runner.
+     */
+    default void closeRun(UUID runId) {
     }
 }

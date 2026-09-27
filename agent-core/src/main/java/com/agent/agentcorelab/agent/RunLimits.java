@@ -11,10 +11,27 @@ public record RunLimits(
         int outputTokenReserve,
         int maxRepeatedToolCalls,
         int maxConsecutiveToolErrors,
-        int maxToolResultBytes
+        int maxToolResultBytes,
+        Duration waitingTimeout
 ) {
     public RunLimits(int maxModelRequests, int maxToolCalls, Duration modelTimeout, Duration activeTimeout) {
-        this(maxModelRequests, maxToolCalls, modelTimeout, activeTimeout, 32768, 4096, 3, 3, 16384);
+        this(maxModelRequests, maxToolCalls, modelTimeout, activeTimeout, 32768, 4096, 3, 3, 16384, Duration.ofMinutes(15));
+    }
+
+    public RunLimits(
+            int maxModelRequests,
+            int maxToolCalls,
+            Duration modelTimeout,
+            Duration activeTimeout,
+            int maxContextTokens,
+            int outputTokenReserve,
+            int maxRepeatedToolCalls,
+            int maxConsecutiveToolErrors,
+            int maxToolResultBytes
+    ) {
+        this(maxModelRequests, maxToolCalls, modelTimeout, activeTimeout,
+                maxContextTokens, outputTokenReserve, maxRepeatedToolCalls,
+                maxConsecutiveToolErrors, maxToolResultBytes, Duration.ofMinutes(15));
     }
 
     public RunLimits {
@@ -26,6 +43,9 @@ public record RunLimits(
         if (modelTimeout == null || modelTimeout.isNegative() || modelTimeout.isZero()
                 || activeTimeout == null || activeTimeout.isNegative() || activeTimeout.isZero()) {
             throw new IllegalArgumentException("Timeouts must be positive");
+        }
+        if (waitingTimeout == null || waitingTimeout.isNegative() || waitingTimeout.isZero()) {
+            waitingTimeout = Duration.ofMinutes(15);
         }
     }
 }

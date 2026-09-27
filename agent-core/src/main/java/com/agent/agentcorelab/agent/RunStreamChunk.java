@@ -3,6 +3,7 @@ package com.agent.agentcorelab.agent;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 
 public record RunStreamChunk(
         Type type,
@@ -18,6 +19,7 @@ public record RunStreamChunk(
         TOOL_STARTED,
         TOOL_FINISHED,
         WAITING_INPUT,
+        WAITING_APPROVAL,
         STATUS_CHANGED,
         PLAN_UPDATED,
         BRIEF_UPDATED
@@ -47,6 +49,34 @@ public record RunStreamChunk(
     public static RunStreamChunk waitingInput(String question, List<String> options) {
         return new RunStreamChunk(Type.WAITING_INPUT, question, null, null, RunStatus.WAITING_INPUT,
                 Map.of("options", options != null ? options : List.of()));
+    }
+
+    public static RunStreamChunk waitingApproval(ApprovalRequest request) {
+        Objects.requireNonNull(request, "request");
+        return new RunStreamChunk(Type.WAITING_APPROVAL, request.description(), request.toolName(), request.callId(),
+                RunStatus.WAITING_APPROVAL,
+                Map.of(
+                        "approvalId", request.approvalId(),
+                        "toolName", request.toolName(),
+                        "callId", request.callId(),
+                        "argumentsJson", request.argumentsJson(),
+                        "description", request.description()
+                ));
+    }
+
+    public Optional<ApprovalRequest> approvalRequest() {
+        if (type != Type.WAITING_APPROVAL) {
+            return Optional.empty();
+        }
+        String approvalId = (String) metadata.get("approvalId");
+        String tool = (String) metadata.get("toolName");
+        String call = (String) metadata.get("callId");
+        String args = (String) metadata.get("argumentsJson");
+        String desc = (String) metadata.get("description");
+        if (approvalId == null) {
+            return Optional.empty();
+        }
+        return Optional.of(new ApprovalRequest(approvalId, call, tool, args, desc, null));
     }
 
     public static RunStreamChunk statusChanged(RunStatus status) {
