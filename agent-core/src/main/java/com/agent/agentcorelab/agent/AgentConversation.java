@@ -43,7 +43,18 @@ public final class AgentConversation {
      * @return The execution result of this turn
      */
     public RunResult send(String message) {
-        return runner.run(spec, new RunRequest(message, workspace), policy);
+        return send(message, null);
+    }
+
+    /**
+     * Sends a user message to this conversation turn with a streaming listener.
+     *
+     * @param message The user message or answer
+     * @param listener Consumer for streaming progress events, tool status, and tokens
+     * @return The execution result of this turn
+     */
+    public RunResult send(String message, java.util.function.Consumer<RunStreamChunk> listener) {
+        return runner.run(spec, new RunRequest(message, workspace), policy, listener);
     }
 
     /**
@@ -58,6 +69,22 @@ public final class AgentConversation {
      */
     public void cancel() {
         runner.currentSnapshot().ifPresent(snapshot -> runner.cancel(snapshot.runId()));
+    }
+
+    /**
+     * Revises the goal, constraints, or deliverables for the current active/waiting task in this conversation.
+     *
+     * @param revisedBrief The revised task brief with updated objective, constraints, or deliverables
+     * @return The execution result after revising the goal
+     */
+    public RunResult reviseGoal(TaskBrief revisedBrief) {
+        return reviseGoal(revisedBrief, null);
+    }
+
+    public RunResult reviseGoal(TaskBrief revisedBrief, java.util.function.Consumer<RunStreamChunk> listener) {
+        RunSnapshot snapshot = currentSnapshot().orElseThrow(() ->
+                new IllegalStateException("No active conversation to revise goal"));
+        return runner.reviseGoal(snapshot.runId(), revisedBrief, listener);
     }
 
     public AgentRunner runner() {

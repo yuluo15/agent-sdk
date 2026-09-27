@@ -3,11 +3,25 @@ package com.agent.agentcorelab.agent;
 import com.agent.agentcorelab.workspace.Workspace;
 
 import java.util.Objects;
+import java.util.Optional;
 import java.util.function.BooleanSupplier;
 
-public record RunRequest(String goal, Workspace workspace, BooleanSupplier cancellationRequested) {
+public record RunRequest(
+        String goal,
+        Workspace workspace,
+        BooleanSupplier cancellationRequested,
+        Optional<TaskBrief> initialBrief
+) {
     public RunRequest(String goal, Workspace workspace) {
-        this(goal, workspace, () -> false);
+        this(goal, workspace, () -> false, Optional.empty());
+    }
+
+    public RunRequest(String goal, Workspace workspace, BooleanSupplier cancellationRequested) {
+        this(goal, workspace, cancellationRequested, Optional.empty());
+    }
+
+    public RunRequest(String goal, Workspace workspace, TaskBrief initialBrief) {
+        this(goal, workspace, () -> false, Optional.ofNullable(initialBrief));
     }
 
     public RunRequest {
@@ -16,5 +30,6 @@ public record RunRequest(String goal, Workspace workspace, BooleanSupplier cance
         }
         Objects.requireNonNull(workspace, "workspace");
         Objects.requireNonNull(cancellationRequested, "cancellationRequested");
+        initialBrief = initialBrief != null ? initialBrief : Optional.empty();
     }
 }

@@ -860,4 +860,51 @@ class SpringAiModelGatewayTests {
         assertThrows(IllegalStateException.class, session::estimatedInputTokens);
         assertEquals(0, requestCount.get());
     }
+
+    @Test
+    void nextResponseStreamingListenerEmitsChunks() {
+        reply(completion("{\"role\":\"assistant\",\"content\":\"text response from model\"}", "stop", ""));
+        try (var session = session()) {
+            List<ModelStreamChunk> chunks = new ArrayList<>();
+            ModelResponse response = session.nextResponse(TIMEOUT, chunks::add);
+            assertEquals("text response from model", response.text());
+            assertFalse(chunks.isEmpty());
+            assertEquals("text response from model", chunks.get(0).text());
+        }
+    }
+
+    @Test
+    void compactContextReducesHistoricalToolResponseSize() {
+        try (var session = session()) {
+            reply(completion(toolMessage(call("c1")), "tool_calls", ""));
+            session.nextResponse(TIMEOUT);
+            // Append a large tool response (> 200 chars)
+            StringBuilder bigData = new StringBuilder("{\"ok\":true,\"data\":[");
+            for (int i = 0; i < 50; i++) {
+                bigData.append("{\"item\":\"record_").append(i).append("\"},");
+            }
+            bigData.append("{\"item\":\"last\"}]}");
+            session.appendToolResult("c1", new ToolOutcome.Success(bigData.toString()));
+
+            // Now append a couple more message pairs so c1 is outside the keepRecent bound
+            reply(completion(toolMessage(call("c2")), "tool_calls", ""));
+            session.nextResponse(TIMEOUT);
+            session.appendToolResult("c2", new ToolOutcome.Success("{\"ok\":true}"));
+
+            reply(completion(toolMessage(call("c3")), "tool_calls", ""));
+            session.nextResponse(TIMEOUT);
+            session.appendToolResult("c3", new ToolOutcome.Success("{\"ok\":true}"));
+
+            reply(completion(toolMessage(call("c4")), "tool_calls", ""));
+            session.nextResponse(TIMEOUT);
+            session.appendToolResult("c4", new ToolOutcome.Success("{\"ok\":true}"));
+
+            long tokensBefore = session.estimatedInputTokens();
+            boolean compacted = session.compactContext(tokensBefore - 50);
+            long tokensAfter = session.estimatedInputTokens();
+
+            assertTrue(compacted);
+            assertTrue(tokensAfter < tokensBefore, "Tokens should decrease after compacting large earlier tool response");
+        }
+    }
 }

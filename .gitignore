@@ -32,7 +32,8 @@ build/
 ### VS Code ###
 .vscode/
 
-**/workspace/
+/workspace/
+!**/src/**/workspace/
 .env
 .env.*
 application-local.properties

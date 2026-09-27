@@ -32,6 +32,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.function.Consumer;
 
 /** A non-streaming, one-request adapter. Only the Runner owns tool execution and iteration. */
 public final class SpringAiModelGateway implements ModelGateway {
@@ -256,6 +257,15 @@ public final class SpringAiModelGateway implements ModelGateway {
         }
 
         @Override
+        public ModelResponse nextResponse(Duration timeout, Consumer<ModelStreamChunk> chunkListener) {
+            ModelResponse response = nextResponse(timeout);
+            if (chunkListener != null && response != null && response.text() != null && !response.text().isEmpty()) {
+                chunkListener.accept(ModelStreamChunk.text(response.text()));
+            }
+            return response;
+        }
+
+        @Override
         public long estimatedInputTokens() {
             requireOpen();
             try {
@@ -270,6 +280,39 @@ public final class SpringAiModelGateway implements ModelGateway {
             } catch (Exception ex) {
                 throw new ModelCallException("MODEL_CONTEXT_ESTIMATE_FAILED");
             }
+        }
+
+        @Override
+        public boolean compactContext(long targetTokenBudget) {
+            requireOpen();
+            long current = estimatedInputTokens();
+            if (current <= targetTokenBudget) {
+                return false;
+            }
+            boolean changed = false;
+            int keepRecent = 4;
+            int bound = Math.max(2, messages.size() - keepRecent);
+            for (int i = 2; i < bound; i++) {
+                Message msg = messages.get(i);
+                if (msg instanceof ToolResponseMessage toolMsg) {
+                    List<ToolResponseMessage.ToolResponse> compacted = new ArrayList<>();
+                    for (var resp : toolMsg.getResponses()) {
+                        if (resp.responseData() != null && resp.responseData().length() > 200) {
+                            compacted.add(new ToolResponseMessage.ToolResponse(
+                                    resp.id(), resp.name(),
+                                    "{\"ok\":true,\"_compacted\":true,\"note\":\"[Historical tool output compacted to fit context budget]\"}"
+                            ));
+                            changed = true;
+                        } else {
+                            compacted.add(resp);
+                        }
+                    }
+                    if (changed) {
+                        messages.set(i, ToolResponseMessage.builder().responses(compacted).build());
+                    }
+                }
+            }
+            return changed;
         }
 
         List<Message> nativeMessages() {

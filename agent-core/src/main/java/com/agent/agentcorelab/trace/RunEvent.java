@@ -13,6 +13,9 @@ public record RunEvent(long sequence, UUID runId, Instant occurredAt, Type type,
         TOOL_FINISHED,
         WAITING_INPUT,
         INPUT_RECEIVED,
+        PLAN_UPDATED,
+        BRIEF_UPDATED,
+        DELIVERABLE_VERIFIED,
         RUN_FINISHED
     }
 }

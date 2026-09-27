@@ -3,14 +3,21 @@ package com.agent.agentcorelab.agent;
 import com.agent.agentcorelab.model.ModelGateway;
 import com.agent.agentcorelab.model.ModelResponse;
 import com.agent.agentcorelab.model.ModelSession;
+import com.agent.agentcorelab.model.ModelStreamChunk;
 import com.agent.agentcorelab.tool.ActiveTimeExceededException;
+import com.agent.agentcorelab.tool.CheckDeliverableTool;
 import com.agent.agentcorelab.tool.ClarificationTool;
+import com.agent.agentcorelab.tool.ReadWorkItemTool;
+import com.agent.agentcorelab.tool.SaveWorkNoteTool;
+import com.agent.agentcorelab.tool.Tool;
 import com.agent.agentcorelab.tool.ToolCall;
 import com.agent.agentcorelab.tool.ToolCatalog;
 import com.agent.agentcorelab.tool.ToolContext;
+import com.agent.agentcorelab.tool.ToolDefinition;
 import com.agent.agentcorelab.tool.ToolExecutor;
 import com.agent.agentcorelab.tool.ToolJson;
 import com.agent.agentcorelab.tool.ToolOutcome;
+import com.agent.agentcorelab.tool.UpdatePlanTool;
 import com.agent.agentcorelab.trace.RunEvent;
 import com.agent.agentcorelab.trace.RunEventSink;
 import com.agent.agentcorelab.workspace.Artifact;
@@ -29,7 +36,10 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.HexFormat;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -39,6 +49,7 @@ import java.util.concurrent.CancellationException;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.function.Consumer;
 import java.util.function.LongSupplier;
 
 public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
@@ -70,6 +81,11 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
 
     @Override
     public RunResult run(AgentSpec agent, RunRequest request, ExecutionPolicy policy) {
+        return run(agent, request, policy, null);
+    }
+
+    @Override
+    public RunResult run(AgentSpec agent, RunRequest request, ExecutionPolicy policy, Consumer<RunStreamChunk> listener) {
         Objects.requireNonNull(agent, "agent");
         Objects.requireNonNull(request, "request");
         ExecutionPolicy effectivePolicy = policy != null ? policy : agent.policy();
@@ -83,7 +99,7 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
                 switch (taskPolicy) {
                     case RESUME_IF_WAITING -> {
                         if (current.status == RunStatus.WAITING_INPUT) {
-                            return doResume(current, request.goal());
+                            return doResume(current, request.goal(), listener);
                         }
                         throw new ActiveTaskConflictException(current.id, current.status, current.pending);
                     }
@@ -107,7 +123,7 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
                     }
                 }
             }
-            ToolCatalog selected = tools.select(agent.toolNames());
+            ToolCatalog selected = resolveCatalog(agent);
             ToolExecutor executor = new ToolExecutor(selected, agent.limits().maxToolResultBytes());
             State state = new State(agent, request, executor, effectivePolicy);
             runs.put(state.id, state);
@@ -115,11 +131,18 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
             String rules = effectivePolicy.runtimeRules().orElse(ExecutionPolicy.DEFAULT_RUNTIME_RULES);
             return drive(state, () -> {
                 state.resources = new WorkspaceSession(request.workspace(), state.id);
+                state.resources.setGoalVersion(state.taskBrief.goalVersion());
                 state.traceReady = true;
-                state.session = model.openSession(rules + "\n" + agent.instructions(), request.goal(),
+                String userPrompt = request.initialBrief().isPresent()
+                        ? state.taskBrief.toPromptBlock() + "\n\nUser Request: " + request.goal()
+                        : request.goal();
+                state.session = model.openSession(rules + "\n" + agent.instructions(), userPrompt,
                         selected.definitions());
                 event(state, RunEvent.Type.RUN_STARTED, Map.of("agentId", agent.id()));
-            });
+                if (listener != null) {
+                    listener.accept(RunStreamChunk.briefUpdated(state.taskBrief.goalVersion(), state.taskBrief.objective(), state.taskBrief.deliverables()));
+                }
+            }, listener);
         } finally {
             unlockOwner();
         }
@@ -127,11 +150,21 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
 
     @Override
     public RunResult chat(AgentSpec agent, RunRequest request) {
-        return run(agent, request, ExecutionPolicy.conversational());
+        return run(agent, request, ExecutionPolicy.conversational(), null);
+    }
+
+    @Override
+    public RunResult chat(AgentSpec agent, RunRequest request, Consumer<RunStreamChunk> listener) {
+        return run(agent, request, ExecutionPolicy.conversational(), listener);
     }
 
     @Override
     public RunResult resume(UUID runId, String answer) {
+        return resume(runId, answer, null);
+    }
+
+    @Override
+    public RunResult resume(UUID runId, String answer, Consumer<RunStreamChunk> listener) {
         if (answer == null || answer.isBlank() || answer.length() > 16000) {
             throw new IllegalArgumentException("Answer must contain between 1 and 16000 characters");
         }
@@ -141,20 +174,20 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
             if (closed || state != current || state.status != RunStatus.WAITING_INPUT) {
                 throw new IllegalStateException("Only the pending question of the active task can be answered");
             }
-            return doResume(state, answer);
+            return doResume(state, answer, listener);
         } finally {
             unlockOwner();
         }
     }
 
-    private RunResult doResume(State state, String answer) {
+    private RunResult doResume(State state, String answer, Consumer<RunStreamChunk> listener) {
         return drive(state, () -> {
             ToolCall call = state.pendingCall;
             state.status = RunStatus.RUNNING;
             state.wasResumedFromClarification = true;
             if (call != null) {
                 accept(state, call, new ToolOutcome.Success(ToolJson.write(Map.of(
-                        "ok", true, "data", Map.of("answer", answer, "source", "current_user")))));
+                        "ok", true, "data", Map.of("answer", answer, "source", "current_user")))), listener);
             } else {
                 state.session.appendUserMessage(answer);
             }
@@ -164,7 +197,66 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
             state.repeated = 0;
             state.errors = 0;
             event(state, RunEvent.Type.INPUT_RECEIVED, Map.of("callId", call != null ? call.callId() : "sub_dialogue"));
-        });
+        }, listener);
+    }
+
+    @Override
+    public RunResult reviseGoal(UUID runId, TaskBrief revisedBrief, Consumer<RunStreamChunk> listener) {
+        Objects.requireNonNull(revisedBrief, "revisedBrief");
+        acquire();
+        try {
+            State state = require(runId);
+            if (closed || state != current || terminal(state.status)) {
+                throw new IllegalStateException("Only active or waiting tasks can have their goal revised");
+            }
+            return doReviseGoal(state, revisedBrief, listener);
+        } finally {
+            unlockOwner();
+        }
+    }
+
+    private RunResult doReviseGoal(State state, TaskBrief revisedBrief, Consumer<RunStreamChunk> listener) {
+        return drive(state, () -> {
+            state.status = RunStatus.RUNNING;
+            if (state.pendingCall != null) {
+                ToolCall call = state.pendingCall;
+                state.pending = null;
+                state.pendingCall = null;
+                accept(state, call, new ToolOutcome.Failure("QUESTION_SUPERSEDED",
+                        "Question was superseded by user goal revision", false), listener);
+            } else if (state.pending != null) {
+                state.pending = null;
+            }
+            state.taskBrief = revisedBrief;
+            state.currentGoal = revisedBrief.objective();
+            if (state.resources != null) {
+                state.resources.setGoalVersion(revisedBrief.goalVersion());
+            }
+            event(state, RunEvent.Type.BRIEF_UPDATED, Map.of(
+                    "goalVersion", revisedBrief.goalVersion(),
+                    "objective", revisedBrief.objective()
+            ));
+            if (listener != null) {
+                listener.accept(RunStreamChunk.briefUpdated(revisedBrief.goalVersion(),
+                        revisedBrief.objective(), revisedBrief.deliverables()));
+            }
+            state.session.appendUserMessage("Goal revised to version " + revisedBrief.goalVersion() + ":\n"
+                    + revisedBrief.toPromptBlock()
+                    + "\nPlease update your plan with updatePlan and adapt your actions to meet the revised goal.");
+        }, listener);
+    }
+
+    private ToolCatalog resolveCatalog(AgentSpec agent) {
+        Map<String, Tool> available = new LinkedHashMap<>();
+        available.put(ClarificationTool.NAME, new ClarificationTool());
+        available.put(ReadWorkItemTool.NAME, new ReadWorkItemTool());
+        available.put(UpdatePlanTool.NAME, new UpdatePlanTool());
+        available.put(SaveWorkNoteTool.NAME, new SaveWorkNoteTool());
+        available.put(CheckDeliverableTool.NAME, new CheckDeliverableTool());
+        for (ToolDefinition def : tools.definitions()) {
+            available.put(def.name(), tools.require(def.name()));
+        }
+        return new ToolCatalog(available.values()).select(agent.toolNames());
     }
 
     @Override
@@ -198,9 +290,12 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
         return state == null ? Optional.empty() : Optional.of(state.snapshot);
     }
 
-    private RunResult drive(State state, StartAction start) {
+    private RunResult drive(State state, StartAction start, Consumer<RunStreamChunk> listener) {
         state.startedAt = nanoTime.getAsLong();
         state.active = true;
+        if (listener != null) {
+            listener.accept(RunStreamChunk.statusChanged(RunStatus.RUNNING));
+        }
         try {
             if (!controlledStop(state)) {
                 start.run();
@@ -211,7 +306,13 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
                         finish(state, RunStatus.STOPPED, "MAX_MODEL_REQUESTS", "Model request budget exhausted");
                         break;
                     }
-                    if (state.session.estimatedInputTokens() > limits.maxContextTokens() - limits.outputTokenReserve()) {
+                    long contextBudget = (long) limits.maxContextTokens() - limits.outputTokenReserve();
+                    if (state.session.estimatedInputTokens() > (long) (contextBudget * 0.75)) {
+                        if (state.session.compactContext((long) (contextBudget * 0.5))) {
+                            event(state, RunEvent.Type.RUN_STARTED, Map.of("compacted", true, "tokensAfter", state.session.estimatedInputTokens()));
+                        }
+                    }
+                    if (state.session.estimatedInputTokens() > contextBudget) {
                         finish(state, RunStatus.STOPPED, "CONTEXT_LIMIT", "Context budget exhausted; no history was silently removed");
                         break;
                     }
@@ -225,7 +326,15 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
                     }
                     ModelResponse response;
                     try {
-                        response = state.session.nextResponse(min(limits.modelTimeout(), remaining(state)));
+                        response = state.session.nextResponse(min(limits.modelTimeout(), remaining(state)), chunk -> {
+                            if (listener != null && chunk != null && chunk.text() != null) {
+                                if (chunk.type() == ModelStreamChunk.Type.THINKING) {
+                                    listener.accept(RunStreamChunk.thinking(chunk.text()));
+                                } else {
+                                    listener.accept(RunStreamChunk.text(chunk.text()));
+                                }
+                            }
+                        });
                     } catch (RuntimeException ex) {
                         state.usageKnown = false;
                         if (!controlledStop(state)) {
@@ -246,9 +355,9 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
                     event(state, RunEvent.Type.MODEL_FINISHED, Map.of("request", state.modelRequests,
                             "finishReason", response.finishReason().name(), "toolCalls", response.toolCalls().size()));
                     if (!response.toolCalls().isEmpty()) {
-                        executeBatch(state, response.toolCalls());
+                        executeBatch(state, response.toolCalls(), listener);
                     } else {
-                        complete(state, response.text());
+                        complete(state, response.text(), listener);
                     }
                 }
             }
@@ -270,11 +379,14 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
                 emitFinished(state);
             }
             publish(state);
+            if (listener != null) {
+                listener.accept(RunStreamChunk.statusChanged(state.status));
+            }
         }
         return new RunResult(state.snapshot, state.message, state.reason);
     }
 
-    private void executeBatch(State state, List<ToolCall> calls) {
+    private void executeBatch(State state, List<ToolCall> calls, Consumer<RunStreamChunk> listener) {
         if (calls.size() > state.spec.limits().maxToolCalls() - state.toolCalls) {
             finish(state, RunStatus.STOPPED, "MAX_TOOL_CALLS", "Entire tool batch exceeds the remaining budget");
             skipped(state, calls, 0);
@@ -283,7 +395,7 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
         state.toolCalls += calls.size();
         state.wasResumedFromClarification = false;
         state.clarificationSubDialogueTurns = 0;
-        boolean mixed = calls.size() != 1 && calls.stream().anyMatch(call -> ClarificationTool.NAME.equals(call.name()));
+        boolean mixed = calls.size() != 1 && calls.stream().anyMatch(call -> isControlTool(call.name()));
         for (int index = 0; index < calls.size(); index++) {
             ToolCall call = calls.get(index);
             if (controlledStop(state)) {
@@ -301,7 +413,7 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
                 }
             }
             ToolOutcome outcome = mixed
-                    ? new ToolOutcome.Failure("MIXED_CONTROL_BATCH", "Clarification must be the only call in a response", false)
+                    ? new ToolOutcome.Failure("MIXED_CONTROL_BATCH", "Control tools (updatePlan, requestClarification) must be the only call in a response", false)
                     : state.executor.validate(call);
             if (outcome == null && ClarificationTool.NAME.equals(call.name())) {
                 var arguments = ToolJson.parse(call.argumentsJson());
@@ -321,13 +433,86 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
                         state.status = RunStatus.WAITING_INPUT;
                         state.message = question;
                         event(state, RunEvent.Type.WAITING_INPUT, Map.of("callId", call.callId()));
+                        if (listener != null) {
+                            listener.accept(RunStreamChunk.waitingInput(question, options));
+                        }
                     }
                     return;
+                }
+            }
+            if (outcome == null && UpdatePlanTool.NAME.equals(call.name())) {
+                try {
+                    var arguments = ToolJson.parse(call.argumentsJson());
+                    int expectedRevision = arguments.path("expectedRevision").asInt(-1);
+                    int goalVersion = arguments.path("goalVersion").asInt(-1);
+                    String reason = arguments.path("reason").asText("");
+                    List<TaskStep> newSteps = new ArrayList<>();
+                    if (arguments.has("steps") && arguments.get("steps").isArray()) {
+                        for (var stepNode : arguments.get("steps")) {
+                            String stepId = stepNode.path("stepId").asText("");
+                            String title = stepNode.path("title").asText("");
+                            String desc = stepNode.path("description").asText("");
+                            String statusStr = stepNode.path("status").asText("PENDING");
+                            TaskStep.Status status = null;
+                            try {
+                                status = TaskStep.Status.valueOf(statusStr.toUpperCase(Locale.ROOT));
+                            } catch (Exception ignored) {
+                            }
+                            List<String> evidenceRefs = new ArrayList<>();
+                            if (stepNode.has("evidenceRefs") && stepNode.get("evidenceRefs").isArray()) {
+                                for (var refNode : stepNode.get("evidenceRefs")) {
+                                    evidenceRefs.add(refNode.asText());
+                                }
+                            }
+                            String stepReason = stepNode.path("reason").asText("");
+                            if (status == null) {
+                                outcome = new ToolOutcome.Failure("INVALID_STATUS", "Invalid status: " + statusStr, false);
+                                break;
+                            }
+                            try {
+                                newSteps.add(new TaskStep(stepId, title, desc, status, evidenceRefs, stepReason));
+                            } catch (IllegalArgumentException e) {
+                                outcome = new ToolOutcome.Failure("INVALID_STEP", e.getMessage(), false);
+                                break;
+                            }
+                        }
+                    }
+                    if (outcome == null) {
+                        Set<String> knownEvidence = state.resources != null ? state.resources.knownEvidenceIds() : Set.of();
+                        int currentGoalVersion = state.taskBrief != null ? state.taskBrief.goalVersion() : 1;
+                        TaskPlan.ValidationResult val = state.taskPlan.validateUpdate(expectedRevision, currentGoalVersion, newSteps, knownEvidence);
+                        if (!val.valid()) {
+                            outcome = new ToolOutcome.Failure(val.code(), val.message(), false);
+                        } else {
+                            state.taskPlan = state.taskPlan.withNextRevision(reason, newSteps);
+                            publish(state);
+                            event(state, RunEvent.Type.PLAN_UPDATED, Map.of("revision", state.taskPlan.planRevision(), "reason", reason));
+                            if (listener != null) {
+                                List<Map<String, Object>> stepsData = newSteps.stream().map(s -> Map.<String, Object>of(
+                                        "stepId", s.stepId(),
+                                        "title", s.title(),
+                                        "status", s.status().name(),
+                                        "evidenceRefs", s.evidenceRefs()
+                                )).toList();
+                                listener.accept(RunStreamChunk.planUpdated(state.taskPlan.planRevision(), state.taskPlan.goalVersion(), reason, stepsData));
+                            }
+                            outcome = new ToolOutcome.Success(ToolJson.write(Map.of(
+                                    "ok", true,
+                                    "planRevision", state.taskPlan.planRevision(),
+                                    "message", "Plan updated successfully to revision " + state.taskPlan.planRevision()
+                            )));
+                        }
+                    }
+                } catch (Exception e) {
+                    outcome = new ToolOutcome.Failure("INVALID_ARGUMENT", "Failed to parse updatePlan arguments: " + e.getMessage(), false);
                 }
             }
             if (outcome == null) {
                 event(state, RunEvent.Type.TOOL_STARTED, Map.of("callId", call.callId(), "tool", call.name(),
                         "argumentsSha256", digest(call.argumentsJson())));
+                if (listener != null) {
+                    listener.accept(RunStreamChunk.toolStarted(call.callId(), call.name(), Map.of("callId", call.callId())));
+                }
                 ToolContext context = new ToolContext(state.id, state.request.workspace(),
                         Instant.now().plus(remaining(state)), state::isCancellationRequested,
                         artifact -> state.artifacts.add(artifact), state.resources);
@@ -343,7 +528,7 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
                     return;
                 }
             }
-            accept(state, call, outcome);
+            accept(state, call, outcome, listener);
             if (controlledStop(state)) {
                 skipped(state, calls, index + 1);
                 return;
@@ -363,15 +548,19 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
         }
     }
 
-    private void accept(State state, ToolCall call, ToolOutcome outcome) {
+    private void accept(State state, ToolCall call, ToolOutcome outcome, Consumer<RunStreamChunk> listener) {
         state.observations.add(new RunSnapshot.Observation(call, outcome));
         state.errors = outcome instanceof ToolOutcome.Failure ? state.errors + 1 : 0;
         state.session.appendToolResult(call.callId(), outcome);
+        String outcomeCode = outcome instanceof ToolOutcome.Failure failure ? failure.code() : "SUCCESS";
         event(state, RunEvent.Type.TOOL_FINISHED, Map.of("callId", call.callId(), "tool", call.name(),
-                "outcome", outcome instanceof ToolOutcome.Failure failure ? failure.code() : "SUCCESS"));
+                "outcome", outcomeCode));
+        if (listener != null) {
+            listener.accept(RunStreamChunk.toolFinished(call.callId(), call.name(), outcomeCode));
+        }
     }
 
-    private void complete(State state, String answer) throws IOException {
+    private void complete(State state, String answer, Consumer<RunStreamChunk> listener) throws IOException {
         state.resources.verifyInputs(() -> {
             if (state.isCancellationRequested()) throw new CancellationException();
             if (remaining(state).compareTo(Duration.ZERO) <= 0) throw new ActiveTimeExceededException();
@@ -379,6 +568,12 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
         CompletionCheck.Result check = state.spec.completionCheck().check(publish(state), answer);
         if (controlledStop(state)) {
             return;
+        }
+        if (check.complete() && state.taskBrief != null) {
+            check = verifyTaskBriefDeliverables(state, check);
+            if (controlledStop(state)) {
+                return;
+            }
         }
         if (check.complete()) {
             state.wasResumedFromClarification = false;
@@ -402,6 +597,9 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
                 state.message = answer;
                 state.reason = "CLARIFICATION_SUB_DIALOGUE";
                 event(state, RunEvent.Type.WAITING_INPUT, Map.of("subDialogue", true, "turn", state.clarificationSubDialogueTurns));
+                if (listener != null) {
+                    listener.accept(RunStreamChunk.waitingInput(answer, options));
+                }
             }
             return;
         }
@@ -412,6 +610,48 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
         } else {
             finish(state, RunStatus.STOPPED, "INCOMPLETE_DELIVERABLE", check.feedback());
         }
+    }
+
+    private static boolean isControlTool(String toolName) {
+        return ClarificationTool.NAME.equals(toolName) || UpdatePlanTool.NAME.equals(toolName);
+    }
+
+    private CompletionCheck.Result verifyTaskBriefDeliverables(State state, CompletionCheck.Result currentResult) {
+        if (state.taskBrief == null) {
+            return currentResult;
+        }
+        List<String> deliverables = state.taskBrief.deliverables();
+        Set<Artifact> allArtifacts = new LinkedHashSet<>(state.artifacts);
+        if (state.resources != null) {
+            allArtifacts.addAll(state.resources.allArtifacts());
+        }
+
+        for (Artifact artifact : allArtifacts) {
+            if (artifact.goalVersion() < state.taskBrief.goalVersion()) {
+                return CompletionCheck.Result.incomplete(
+                        "STALE_GOAL: Artifact '" + artifact.id() + "' was produced for goalVersion "
+                                + artifact.goalVersion() + ", but current goalVersion is " + state.taskBrief.goalVersion()
+                                + ". Please regenerate the deliverable for the revised goal.");
+            }
+        }
+
+        if (!deliverables.isEmpty()) {
+            for (String deliverable : deliverables) {
+                boolean found = allArtifacts.stream().anyMatch(a -> {
+                    String filename = a.path().getFileName().toString().toLowerCase(Locale.ROOT);
+                    String id = a.id().toLowerCase(Locale.ROOT);
+                    String expected = deliverable.toLowerCase(Locale.ROOT);
+                    return filename.contains(expected) || id.contains(expected);
+                });
+                if (!found) {
+                    return CompletionCheck.Result.incomplete(
+                            "MISSING_DELIVERABLE: Required deliverable '" + deliverable
+                                    + "' is not yet generated in the workspace. Please generate it before completing.");
+                }
+            }
+        }
+
+        return currentResult;
     }
 
     private String protocolError(State state, ModelResponse response) {
@@ -531,7 +771,9 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
         state.snapshot = new RunSnapshot(state.id, state.spec.id(), state.currentGoal, state.status,
                 state.observations, state.artifacts,
                 new RunMetrics(state.modelRequests, state.toolCalls, Duration.ofNanos(elapsed(state)), usage),
-                Optional.ofNullable(state.pending));
+                Optional.ofNullable(state.pending),
+                Optional.ofNullable(state.taskBrief),
+                Optional.ofNullable(state.taskPlan));
         return state.snapshot;
     }
 
@@ -687,6 +929,9 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
         private int repeated;
         private int errors;
         private int corrections;
+        private TaskBrief taskBrief;
+        private TaskPlan taskPlan;
+        private int maxCorrections = 2;
 
         private boolean isCancellationRequested() {
             return closed || cancelled.get() || request.cancellationRequested().getAsBoolean();
@@ -698,6 +943,8 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
             this.executor = executor;
             this.policy = policy;
             this.currentGoal = request.goal();
+            this.taskBrief = request.initialBrief().orElseGet(() -> TaskBrief.of(request.goal()));
+            this.taskPlan = TaskPlan.empty(this.taskBrief.goalVersion());
             publish(this);
         }
     }

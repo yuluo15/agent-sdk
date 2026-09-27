@@ -5,6 +5,7 @@ import com.networknt.schema.JsonSchema;
 import com.networknt.schema.JsonSchemaFactory;
 import com.networknt.schema.SpecVersion;
 
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Map;
@@ -56,9 +57,8 @@ public final class ToolExecutor {
         try {
             ToolOutcome outcome = catalog.require(call.name()).execute(call.argumentsJson(), context);
             if (outcome instanceof ToolOutcome.Success success) {
-                if (success.outputJson() != null
-                        && success.outputJson().getBytes(StandardCharsets.UTF_8).length > maxResultBytes) {
-                    return new ToolOutcome.Failure("TOOL_RESULT_LIMIT", "Tool result exceeds its configured limit", true);
+                if (success.outputJson() == null) {
+                    return invalidOutput();
                 }
                 try {
                     if (!ToolJson.parse(success.outputJson()).isObject()) {
@@ -66,6 +66,27 @@ public final class ToolExecutor {
                     }
                 } catch (IllegalArgumentException ex) {
                     return invalidOutput();
+                }
+                if (success.outputJson().getBytes(StandardCharsets.UTF_8).length > maxResultBytes) {
+                    if (context != null && context.resources() != null) {
+                        try {
+                            var item = context.resources().saveWorkItem(call.name(), call.callId(), success.outputJson());
+                            String offloadedJson = ToolJson.write(Map.of(
+                                    "ok", true,
+                                    "_offloaded", true,
+                                    "itemId", item.itemId(),
+                                    "tool", item.tool(),
+                                    "bytes", item.bytes(),
+                                    "preview", item.preview(),
+                                    "note", "Tool output exceeds inline limit (" + maxResultBytes
+                                            + " bytes) and was offloaded to workspace. Use readWorkItem tool with itemId to read slices."
+                            ));
+                            return new ToolOutcome.Success(offloadedJson);
+                        } catch (IOException ex) {
+                            return new ToolOutcome.Failure("STORAGE_FAILED", "Failed to offload tool result to workspace", true);
+                        }
+                    }
+                    return new ToolOutcome.Failure("TOOL_RESULT_LIMIT", "Tool result exceeds its configured limit", true);
                 }
             } else if (outcome instanceof ToolOutcome.Failure failure) {
                 String json = ToolJson.write(Map.of("ok", false, "error",
