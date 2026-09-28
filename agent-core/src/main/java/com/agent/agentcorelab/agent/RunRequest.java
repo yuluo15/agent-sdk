@@ -10,18 +10,31 @@ public record RunRequest(
         String goal,
         Workspace workspace,
         BooleanSupplier cancellationRequested,
-        Optional<TaskBrief> initialBrief
+        Optional<TaskBrief> initialBrief,
+        Optional<String> conversationId
 ) {
     public RunRequest(String goal, Workspace workspace) {
-        this(goal, workspace, () -> false, Optional.empty());
+        this(goal, workspace, () -> false, Optional.empty(), Optional.empty());
+    }
+
+    public RunRequest(String goal, Workspace workspace, String conversationId) {
+        this(goal, workspace, () -> false, Optional.empty(), Optional.ofNullable(conversationId));
     }
 
     public RunRequest(String goal, Workspace workspace, BooleanSupplier cancellationRequested) {
-        this(goal, workspace, cancellationRequested, Optional.empty());
+        this(goal, workspace, cancellationRequested, Optional.empty(), Optional.empty());
     }
 
     public RunRequest(String goal, Workspace workspace, TaskBrief initialBrief) {
-        this(goal, workspace, () -> false, Optional.ofNullable(initialBrief));
+        this(goal, workspace, () -> false, Optional.ofNullable(initialBrief), Optional.empty());
+    }
+
+    public RunRequest(String goal, Workspace workspace, TaskBrief initialBrief, String conversationId) {
+        this(goal, workspace, () -> false, Optional.ofNullable(initialBrief), Optional.ofNullable(conversationId));
+    }
+
+    public RunRequest(String goal, Workspace workspace, BooleanSupplier cancellationRequested, Optional<TaskBrief> initialBrief) {
+        this(goal, workspace, cancellationRequested, initialBrief, Optional.empty());
     }
 
     public RunRequest {
@@ -31,5 +44,6 @@ public record RunRequest(
         Objects.requireNonNull(workspace, "workspace");
         Objects.requireNonNull(cancellationRequested, "cancellationRequested");
         initialBrief = initialBrief != null ? initialBrief : Optional.empty();
+        conversationId = conversationId != null ? conversationId : Optional.empty();
     }
 }

@@ -9,6 +9,8 @@ import com.agent.agentcorelab.scenario.ScenarioRegistry;
 import com.agent.agentcorelab.tool.ToolCatalog;
 import com.agent.agentcorelab.trace.JsonlRunEventSink;
 import com.agent.agentcorelab.trace.RunEventSink;
+import com.agent.agentcorelab.memory.ConversationMemory;
+import com.agent.agentcorelab.memory.InMemoryConversationMemory;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
@@ -39,10 +41,18 @@ public class AgentConfiguration {
     }
 
     @Bean
+    @ConditionalOnMissingBean(ConversationMemory.class)
+    public ConversationMemory conversationMemory() {
+        return new InMemoryConversationMemory();
+    }
+
+    @Bean
     @ConditionalOnBean(ModelGateway.class)
     @ConditionalOnMissingBean(AgentRunnerFactory.class)
-    public AgentRunnerFactory agentRunnerFactory(ModelGateway model, ToolCatalog tools, RunEventSink events) {
-        return () -> new DefaultAgentRunner(model, tools, events);
+    public AgentRunnerFactory agentRunnerFactory(ModelGateway model, ToolCatalog tools, RunEventSink events,
+                                                 ObjectProvider<ConversationMemory> memoryProvider) {
+        ConversationMemory memory = memoryProvider.getIfAvailable(InMemoryConversationMemory::new);
+        return () -> new DefaultAgentRunner(model, tools, events, memory);
     }
 
     @Bean

@@ -20,6 +20,9 @@ import com.agent.agentcorelab.tool.ToolOutcome;
 import com.agent.agentcorelab.tool.UpdatePlanTool;
 import com.agent.agentcorelab.trace.RunEvent;
 import com.agent.agentcorelab.trace.RunEventSink;
+import com.agent.agentcorelab.memory.ChatMessage;
+import com.agent.agentcorelab.memory.ConversationMemory;
+import com.agent.agentcorelab.memory.InMemoryConversationMemory;
 import com.agent.agentcorelab.workspace.Artifact;
 import com.agent.agentcorelab.workspace.WorkspaceException;
 import com.agent.agentcorelab.workspace.WorkspaceSession;
@@ -60,6 +63,7 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
     private final ModelGateway model;
     private final ToolCatalog tools;
     private final RunEventSink events;
+    private final ConversationMemory memory;
     private final LongSupplier nanoTime;
     private final int maxActiveRuns;
     private final ReentrantLock owner = new ReentrantLock();
@@ -68,21 +72,34 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
     private volatile boolean closed;
 
     public DefaultAgentRunner(ModelGateway model, ToolCatalog tools, RunEventSink events) {
-        this(model, tools, events, System::nanoTime, DEFAULT_MAX_ACTIVE_RUNS);
+        this(model, tools, events, new InMemoryConversationMemory(), System::nanoTime, DEFAULT_MAX_ACTIVE_RUNS);
+    }
+
+    public DefaultAgentRunner(ModelGateway model, ToolCatalog tools, RunEventSink events, ConversationMemory memory) {
+        this(model, tools, events, memory, System::nanoTime, DEFAULT_MAX_ACTIVE_RUNS);
     }
 
     public DefaultAgentRunner(ModelGateway model, ToolCatalog tools, RunEventSink events, int maxActiveRuns) {
-        this(model, tools, events, System::nanoTime, maxActiveRuns);
+        this(model, tools, events, new InMemoryConversationMemory(), System::nanoTime, maxActiveRuns);
+    }
+
+    public DefaultAgentRunner(ModelGateway model, ToolCatalog tools, RunEventSink events, ConversationMemory memory, int maxActiveRuns) {
+        this(model, tools, events, memory, System::nanoTime, maxActiveRuns);
     }
 
     DefaultAgentRunner(ModelGateway model, ToolCatalog tools, RunEventSink events, LongSupplier nanoTime) {
-        this(model, tools, events, nanoTime, DEFAULT_MAX_ACTIVE_RUNS);
+        this(model, tools, events, new InMemoryConversationMemory(), nanoTime, DEFAULT_MAX_ACTIVE_RUNS);
     }
 
     DefaultAgentRunner(ModelGateway model, ToolCatalog tools, RunEventSink events, LongSupplier nanoTime, int maxActiveRuns) {
+        this(model, tools, events, new InMemoryConversationMemory(), nanoTime, maxActiveRuns);
+    }
+
+    DefaultAgentRunner(ModelGateway model, ToolCatalog tools, RunEventSink events, ConversationMemory memory, LongSupplier nanoTime, int maxActiveRuns) {
         this.model = model;
         this.tools = tools;
         this.events = events;
+        this.memory = memory != null ? memory : new InMemoryConversationMemory();
         this.nanoTime = nanoTime;
         this.maxActiveRuns = maxActiveRuns > 0 ? maxActiveRuns : DEFAULT_MAX_ACTIVE_RUNS;
     }
@@ -150,8 +167,13 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
                 String userPrompt = request.initialBrief().isPresent()
                         ? state.taskBrief.toPromptBlock() + "\n\nUser Request: " + request.goal()
                         : request.goal();
-                state.session = model.openSession(rules + "\n" + agent.instructions(), userPrompt,
+                List<ChatMessage> history = request.conversationId()
+                        .map(memory::getHistory)
+                        .orElse(List.of());
+                state.session = model.openSession(rules + "\n" + agent.instructions(), history, userPrompt,
                         selected.definitions());
+                request.conversationId().ifPresent(cid ->
+                        memory.append(cid, ChatMessage.user(request.goal())));
                 event(state, RunEvent.Type.RUN_STARTED, Map.of("goal", request.goal(), "agentId", agent.id()));
             }, listener);
         } finally {
@@ -255,6 +277,11 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
         }
     }
 
+    @Override
+    public ConversationMemory memory() {
+        return memory;
+    }
+
     private long estimateTokens(String text) {
         if (text == null || text.isBlank()) return 0;
         return Math.max(1, text.length() / 4);
@@ -296,6 +323,8 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
             } else {
                 state.session.appendUserMessage(answer);
             }
+            state.request.conversationId().ifPresent(cid ->
+                    memory.append(cid, ChatMessage.user(answer)));
             state.pending = null;
             state.pendingCall = null;
             state.lastFingerprint = null;
@@ -1007,9 +1036,13 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
             state.pendingCall = null;
             state.pendingApproval = null;
             state.pendingHighRiskCall = null;
-            state.pendingHighRiskCalls = null;
             if (state.resources != null) {
                 state.resources.cleanupTempFiles();
+            }
+            if (state.message != null && !state.message.isBlank() && (status == RunStatus.COMPLETED || status == RunStatus.WAITING_INPUT)) {
+                String assistantMsg = state.message;
+                state.request.conversationId().ifPresent(cid ->
+                        memory.append(cid, ChatMessage.assistant(assistantMsg)));
             }
             publish(state);
         }

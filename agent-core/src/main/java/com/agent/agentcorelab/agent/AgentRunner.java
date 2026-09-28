@@ -127,4 +127,11 @@ public interface AgentRunner {
      */
     default void closeRun(UUID runId) {
     }
+
+    /**
+     * Returns the conversation memory manager if supported by this runner.
+     */
+    default com.agent.agentcorelab.memory.ConversationMemory memory() {
+        return null;
+    }
 }

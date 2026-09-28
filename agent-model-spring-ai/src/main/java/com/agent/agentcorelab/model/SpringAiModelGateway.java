@@ -1,5 +1,6 @@
 package com.agent.agentcorelab.model;
 
+import com.agent.agentcorelab.memory.ChatMessage;
 import com.agent.agentcorelab.tool.ToolCall;
 import com.agent.agentcorelab.tool.ToolDefinition;
 import com.agent.agentcorelab.tool.ToolOutcome;
@@ -82,7 +83,12 @@ public final class SpringAiModelGateway implements ModelGateway {
 
     @Override
     public ModelSession openSession(String instructions, String goal, List<ToolDefinition> tools) {
-        return new Session(instructions, goal, List.copyOf(tools));
+        return openSession(instructions, List.of(), goal, tools);
+    }
+
+    @Override
+    public ModelSession openSession(String instructions, List<ChatMessage> history, String goal, List<ToolDefinition> tools) {
+        return new Session(instructions, history, goal, List.copyOf(tools));
     }
 
     final class Session implements ModelSession {
@@ -94,7 +100,7 @@ public final class SpringAiModelGateway implements ModelGateway {
         private boolean closed;
         private boolean failed;
 
-        private Session(String instructions, String goal, List<ToolDefinition> tools) {
+        private Session(String instructions, List<ChatMessage> history, String goal, List<ToolDefinition> tools) {
             this.tools = tools;
             var names = new HashSet<String>();
             for (ToolDefinition tool : tools) {
@@ -111,6 +117,15 @@ public final class SpringAiModelGateway implements ModelGateway {
             }
             callbacks = tools.stream().map(Session::schemaOnly).toList();
             messages.add(new SystemMessage(Objects.requireNonNull(instructions)));
+            if (history != null && !history.isEmpty()) {
+                for (ChatMessage msg : history) {
+                    switch (msg.role()) {
+                        case USER -> messages.add(new UserMessage(msg.content()));
+                        case ASSISTANT -> messages.add(new AssistantMessage(msg.content()));
+                        case SYSTEM -> messages.add(new SystemMessage(msg.content()));
+                    }
+                }
+            }
             messages.add(new UserMessage(Objects.requireNonNull(goal)));
             transport = new OneShotHttpClient();
         }

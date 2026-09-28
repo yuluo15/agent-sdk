@@ -1,7 +1,9 @@
 package com.agent.agentcorelab.agent;
 
+import com.agent.agentcorelab.memory.ChatMessage;
 import com.agent.agentcorelab.workspace.Workspace;
 
+import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
@@ -11,9 +13,8 @@ import java.util.function.Consumer;
  * A conversational session wrapper over {@link AgentRunner} that provides a natural,
  * single-entrypoint dialogue experience (e.g. for Web, Chat, or Copilot applications).
  * <p>
- * Callers simply invoke {@link #send(String)} on each user turn without needing to
- * manually detect {@link RunStatus#WAITING_INPUT} or manage the bifurcation between
- * {@link AgentRunner#run(AgentSpec, RunRequest)} and {@link AgentRunner#resume(UUID, String)}.
+ * Manages an underlying {@code conversationId}, automatically handles both active waiting resumption
+ * and continuous multi-turn dialogue with conversation history preservation.
  */
 public final class AgentConversation {
 
@@ -21,16 +22,27 @@ public final class AgentConversation {
     private final AgentSpec spec;
     private final Workspace workspace;
     private final ExecutionPolicy policy;
+    private final String conversationId;
 
     public AgentConversation(AgentRunner runner, AgentSpec spec, Workspace workspace) {
-        this(runner, spec, workspace, ExecutionPolicy.conversational());
+        this(runner, spec, workspace, ExecutionPolicy.conversational(), UUID.randomUUID().toString());
+    }
+
+    public AgentConversation(AgentRunner runner, AgentSpec spec, Workspace workspace, String conversationId) {
+        this(runner, spec, workspace, ExecutionPolicy.conversational(), conversationId);
     }
 
     public AgentConversation(AgentRunner runner, AgentSpec spec, Workspace workspace, ExecutionPolicy policy) {
+        this(runner, spec, workspace, policy, UUID.randomUUID().toString());
+    }
+
+    public AgentConversation(AgentRunner runner, AgentSpec spec, Workspace workspace, ExecutionPolicy policy, String conversationId) {
         this.runner = Objects.requireNonNull(runner, "runner");
         this.spec = Objects.requireNonNull(spec, "spec");
         this.workspace = Objects.requireNonNull(workspace, "workspace");
         this.policy = Objects.requireNonNull(policy, "policy");
+        this.conversationId = (conversationId != null && !conversationId.isBlank())
+                ? conversationId : UUID.randomUUID().toString();
     }
 
     /**
@@ -38,7 +50,7 @@ public final class AgentConversation {
      * <p>
      * If the agent is currently waiting for input from a previous turn (e.g., via
      * {@code requestClarification}), this message seamlessly answers that question.
-     * Otherwise, it initiates a new goal/task.
+     * Otherwise, it initiates a new goal/task preserving conversation history across turns.
      *
      * @param message The user message or answer
      * @return The execution result of this turn
@@ -55,7 +67,34 @@ public final class AgentConversation {
      * @return The execution result of this turn
      */
     public RunResult send(String message, Consumer<RunStreamChunk> listener) {
-        return runner.run(spec, new RunRequest(message, workspace), policy, listener);
+        Optional<RunSnapshot> current = currentSnapshot();
+        if (current.isPresent() && current.get().status() == RunStatus.WAITING_INPUT) {
+            return runner.resume(current.get().runId(), message, listener);
+        }
+        return runner.run(spec, new RunRequest(message, workspace, conversationId), policy, listener);
+    }
+
+    /**
+     * Returns the unique conversation identifier for this dialogue session.
+     */
+    public String conversationId() {
+        return conversationId;
+    }
+
+    /**
+     * Returns the recorded dialogue history for this conversation.
+     */
+    public List<ChatMessage> history() {
+        return runner.memory() != null ? runner.memory().getHistory(conversationId) : List.of();
+    }
+
+    /**
+     * Clears all recorded dialogue history for this conversation.
+     */
+    public void clearHistory() {
+        if (runner.memory() != null) {
+            runner.memory().clear(conversationId);
+        }
     }
 
     /**
