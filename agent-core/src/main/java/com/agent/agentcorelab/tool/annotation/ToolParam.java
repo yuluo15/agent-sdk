@@ -9,7 +9,7 @@ import java.lang.annotation.Target;
 /**
  * Provides schema metadata for a parameter of an {@link AgentTool} method.
  */
-@Target(ElementType.PARAMETER)
+@Target({ElementType.PARAMETER, ElementType.RECORD_COMPONENT, ElementType.FIELD, ElementType.METHOD})
 @Retention(RetentionPolicy.RUNTIME)
 @Documented
 public @interface ToolParam {

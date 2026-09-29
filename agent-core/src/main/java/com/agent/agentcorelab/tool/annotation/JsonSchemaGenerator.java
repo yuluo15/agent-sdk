@@ -36,24 +36,38 @@ public final class JsonSchemaGenerator {
         ObjectNode propertiesNode = root.putObject("properties");
         ArrayNode requiredNode = root.putArray("required");
 
-        for (Parameter parameter : method.getParameters()) {
-            if (isContextParameter(parameter)) {
-                continue;
+        Parameter[] parameters = method.getParameters();
+        Parameter singleRecordParam = null;
+        int nonContextCount = 0;
+        for (Parameter p : parameters) {
+            if (!isContextParameter(p)) {
+                nonContextCount++;
+                singleRecordParam = p;
             }
+        }
 
-            String paramName = resolveParameterName(parameter);
-            ToolParam toolParam = parameter.getAnnotation(ToolParam.class);
+        if (nonContextCount == 1 && singleRecordParam != null && isFlattenedRecordParameter(method, singleRecordParam)) {
+            populateRecordSchema(propertiesNode, requiredNode, singleRecordParam.getType());
+        } else {
+            for (Parameter parameter : parameters) {
+                if (isContextParameter(parameter)) {
+                    continue;
+                }
 
-            ObjectNode propertyNode = propertiesNode.putObject(paramName);
-            buildTypeSchema(propertyNode, parameter.getType(), parameter.getParameterizedType());
+                String paramName = resolveParameterName(parameter);
+                ToolParam toolParam = parameter.getAnnotation(ToolParam.class);
 
-            if (toolParam != null && !toolParam.description().isBlank()) {
-                propertyNode.put("description", toolParam.description().trim());
-            }
+                ObjectNode propertyNode = propertiesNode.putObject(paramName);
+                buildTypeSchema(propertyNode, parameter.getType(), parameter.getParameterizedType());
 
-            boolean isRequired = isRequiredParameter(toolParam);
-            if (isRequired) {
-                requiredNode.add(paramName);
+                if (toolParam != null && !toolParam.description().isBlank()) {
+                    propertyNode.put("description", toolParam.description().trim());
+                }
+
+                boolean isRequired = isRequiredParameter(toolParam);
+                if (isRequired) {
+                    requiredNode.add(paramName);
+                }
             }
         }
 
@@ -63,6 +77,23 @@ public final class JsonSchemaGenerator {
 
         root.put("additionalProperties", false);
         return ToolJson.canonical(root);
+    }
+
+    public static boolean isFlattenedRecordParameter(Method method, Parameter parameter) {
+        if (!parameter.getType().isRecord()) {
+            return false;
+        }
+        ToolParam toolParam = parameter.getAnnotation(ToolParam.class);
+        if (toolParam != null && !toolParam.name().isBlank()) {
+            return false;
+        }
+        int nonContextCount = 0;
+        for (Parameter p : method.getParameters()) {
+            if (!isContextParameter(p)) {
+                nonContextCount++;
+            }
+        }
+        return nonContextCount == 1;
     }
 
     public static boolean isContextParameter(Parameter parameter) {
@@ -132,9 +163,56 @@ public final class JsonSchemaGenerator {
             } else {
                 items.put("type", "string");
             }
-        } else {
-            // POJO, Record, Map or other structured object
+        } else if (rawType.isRecord()) {
             target.put("type", "object");
+            ObjectNode props = target.putObject("properties");
+            ArrayNode req = target.putArray("required");
+            populateRecordSchema(props, req, rawType);
+            if (req.isEmpty()) {
+                target.remove("required");
+            }
+            target.put("additionalProperties", false);
+        } else {
+            // POJO, Map or other structured object
+            target.put("type", "object");
+        }
+    }
+
+    public static void populateRecordSchema(ObjectNode propertiesNode, ArrayNode requiredNode, Class<?> recordClass) {
+        for (java.lang.reflect.RecordComponent rc : recordClass.getRecordComponents()) {
+            String name = rc.getName();
+            ObjectNode fieldNode = propertiesNode.putObject(name);
+            buildTypeSchema(fieldNode, rc.getType(), rc.getGenericType());
+
+            ToolParam tp = rc.getAnnotation(ToolParam.class);
+            if (tp == null) {
+                try {
+                    tp = recordClass.getDeclaredField(name).getAnnotation(ToolParam.class);
+                } catch (Exception ignored) {}
+            }
+            if (tp == null) {
+                for (var ctor : recordClass.getDeclaredConstructors()) {
+                    for (var p : ctor.getParameters()) {
+                        if (p.getName().equals(name)) {
+                            tp = p.getAnnotation(ToolParam.class);
+                            if (tp != null) break;
+                        }
+                    }
+                    if (tp != null) break;
+                }
+            }
+
+            if (tp != null && !tp.description().isBlank()) {
+                fieldNode.put("description", tp.description().trim());
+            }
+
+            boolean required = true;
+            if (tp != null && (!tp.required() || !tp.defaultValue().isEmpty())) {
+                required = false;
+            }
+            if (required) {
+                requiredNode.add(name);
+            }
         }
     }
 

@@ -58,7 +58,7 @@ public final class AnnotatedTool implements Tool {
         for (int i = 0; i < parameters.length; i++) {
             Parameter p = parameters[i];
             if (JsonSchemaGenerator.isContextParameter(p)) {
-                params.add(new ParamDescriptor(i, null, p.getType(), p.getParameterizedType(), true, false, null));
+                params.add(new ParamDescriptor(i, null, p.getType(), p.getParameterizedType(), true, false, null, false));
             } else {
                 String paramName = JsonSchemaGenerator.resolveParameterName(p);
                 if (!seenNames.add(paramName)) {
@@ -67,7 +67,8 @@ public final class AnnotatedTool implements Tool {
                 ToolParam toolParam = p.getAnnotation(ToolParam.class);
                 boolean required = JsonSchemaGenerator.isRequiredParameter(toolParam);
                 String defValue = (toolParam != null && !toolParam.defaultValue().isEmpty()) ? toolParam.defaultValue() : null;
-                params.add(new ParamDescriptor(i, paramName, p.getType(), p.getParameterizedType(), false, required, defValue));
+                boolean isRecordRoot = JsonSchemaGenerator.isFlattenedRecordParameter(method, p);
+                params.add(new ParamDescriptor(i, paramName, p.getType(), p.getParameterizedType(), false, required, defValue, isRecordRoot));
             }
         }
         this.descriptors = List.copyOf(params);
@@ -97,9 +98,24 @@ public final class AnnotatedTool implements Tool {
 
             JsonNode valueNode = argsNode.get(desc.name());
             if (valueNode == null || valueNode.isNull()) {
-                if (desc.defaultValue() != null) {
+                if (desc.isRecordRoot()) {
                     try {
-                        invokeArgs[desc.index()] = convertFromString(desc.defaultValue(), desc.type(), desc.genericType());
+                        Object argVal = convertFromNode(argsNode, desc.type(), desc.genericType());
+                        validateIfPresent(argVal);
+                        invokeArgs[desc.index()] = argVal;
+                    } catch (IllegalArgumentException e) {
+                        return new ToolOutcome.Failure("INVALID_ARGUMENT", e.getMessage(), false);
+                    } catch (Exception e) {
+                        return new ToolOutcome.Failure("INVALID_ARGUMENT",
+                                "Invalid arguments for parameter " + desc.name() + ": " + e.getMessage(), false);
+                    }
+                } else if (desc.defaultValue() != null) {
+                    try {
+                        Object argVal = convertFromString(desc.defaultValue(), desc.type(), desc.genericType());
+                        validateIfPresent(argVal);
+                        invokeArgs[desc.index()] = argVal;
+                    } catch (IllegalArgumentException e) {
+                        return new ToolOutcome.Failure("INVALID_ARGUMENT", e.getMessage(), false);
                     } catch (Exception e) {
                         return new ToolOutcome.Failure("INVALID_ARGUMENT",
                                 "Failed to parse default value for parameter " + desc.name() + ": " + e.getMessage(), false);
@@ -111,7 +127,11 @@ public final class AnnotatedTool implements Tool {
                 }
             } else {
                 try {
-                    invokeArgs[desc.index()] = convertFromNode(valueNode, desc.type(), desc.genericType());
+                    Object argVal = convertFromNode(valueNode, desc.type(), desc.genericType());
+                    validateIfPresent(argVal);
+                    invokeArgs[desc.index()] = argVal;
+                } catch (IllegalArgumentException e) {
+                    return new ToolOutcome.Failure("INVALID_ARGUMENT", e.getMessage(), false);
                 } catch (Exception e) {
                     return new ToolOutcome.Failure("INVALID_ARGUMENT",
                             "Invalid argument for parameter " + desc.name() + ": " + e.getMessage(), false);
@@ -214,6 +234,58 @@ public final class AnnotatedTool implements Tool {
         return new ToolOutcome.Success(ToolJson.write(result));
     }
 
+    private static void validateIfPresent(Object target) {
+        if (target == null || ValidatorHolder.VALIDATOR == null || ValidatorHolder.VALIDATE_METHOD == null) {
+            return;
+        }
+        try {
+            Set<?> violations = (Set<?>) ValidatorHolder.VALIDATE_METHOD.invoke(
+                    ValidatorHolder.VALIDATOR, target, new Class<?>[0]);
+            if (violations != null && !violations.isEmpty()) {
+                StringBuilder sb = new StringBuilder();
+                for (Object v : violations) {
+                    Method getPropPath = v.getClass().getMethod("getPropertyPath");
+                    Method getMessage = v.getClass().getMethod("getMessage");
+                    if (!sb.isEmpty()) {
+                        sb.append("; ");
+                    }
+                    sb.append(getPropPath.invoke(v)).append(": ").append(getMessage.invoke(v));
+                }
+                throw new IllegalArgumentException("参数校验失败: " + sb);
+            }
+        } catch (InvocationTargetException e) {
+            if (e.getTargetException() instanceof RuntimeException re) {
+                throw re;
+            }
+            throw new RuntimeException(e.getTargetException());
+        } catch (IllegalArgumentException e) {
+            throw e;
+        } catch (Exception ignore) {
+        }
+    }
+
+    private static final class ValidatorHolder {
+        private static final Object VALIDATOR;
+        private static final Method VALIDATE_METHOD;
+
+        static {
+            Object v = null;
+            Method m = null;
+            try {
+                Class<?> factoryClass = Class.forName("jakarta.validation.Validation");
+                Method buildDefault = factoryClass.getMethod("buildDefaultValidatorFactory");
+                Object factory = buildDefault.invoke(null);
+                Method getValidator = factory.getClass().getMethod("getValidator");
+                v = getValidator.invoke(factory);
+                m = v.getClass().getMethod("validate", Object.class, Class[].class);
+            } catch (Throwable ignored) {
+                // Jakarta Validation not on classpath or failed to init
+            }
+            VALIDATOR = v;
+            VALIDATE_METHOD = m;
+        }
+    }
+
     private record ParamDescriptor(
             int index,
             String name,
@@ -221,6 +293,7 @@ public final class AnnotatedTool implements Tool {
             Type genericType,
             boolean isContext,
             boolean required,
-            String defaultValue
+            String defaultValue,
+            boolean isRecordRoot
     ) {}
 }

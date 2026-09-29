@@ -264,6 +264,63 @@ public class AnnotatedToolTests {
         public void toolTwo() {}
     }
 
+    public record QueryArgs(
+            @ToolParam(description = "Query SQL") String sql,
+            @ToolParam(description = "Purpose of query") String purpose
+    ) {}
+
+    public static class RecordToolService {
+        @AgentTool(name = "run_query", description = "Run query using record parameter")
+        public String runQuery(QueryArgs args, ToolContext ctx) {
+            assertNotNull(ctx);
+            assertNotNull(args);
+            return "{\"success\":true,\"sql\":\"" + args.sql() + "\",\"purpose\":\"" + args.purpose() + "\"}";
+        }
+    }
+
+    @Test
+    void testRecordParameterSchemaAndExecution() {
+        RecordToolService service = new RecordToolService();
+        List<Tool> tools = AnnotatedToolScanner.scan(service);
+        assertEquals(1, tools.size());
+
+        Tool tool = tools.getFirst();
+        assertEquals("run_query", tool.definition().name());
+
+        // Verify Schema contains flattened record fields: sql and purpose
+        String schemaJson = tool.definition().inputSchema();
+        JsonNode schema = ToolJson.parse(schemaJson);
+        assertEquals("object", schema.path("type").asText());
+        assertTrue(schema.path("properties").has("sql"));
+        assertTrue(schema.path("properties").has("purpose"));
+        assertEquals("string", schema.path("properties").path("sql").path("type").asText());
+        assertEquals("string", schema.path("properties").path("purpose").path("type").asText());
+
+        // Test execution with direct flattened JSON
+        String args = """
+                {
+                  "sql": "SELECT 1",
+                  "purpose": "test query"
+                }
+                """;
+        ToolOutcome outcome = tool.execute(args, context);
+        assertInstanceOf(ToolOutcome.Success.class, outcome);
+        assertTrue(((ToolOutcome.Success) outcome).outputJson().contains("SELECT 1"));
+
+        // Test execution with nested object under parameter name "args"
+        String nestedArgs = """
+                {
+                  "args": {
+                    "sql": "SELECT 2",
+                    "purpose": "nested query"
+                  }
+                }
+                """;
+        ToolOutcome outcome2 = tool.execute(nestedArgs, context);
+        assertInstanceOf(ToolOutcome.Success.class, outcome2);
+        assertTrue(((ToolOutcome.Success) outcome2).outputJson().contains("SELECT 2"));
+    }
+
     @Test
     void testDuplicateToolNameRejection() {
         assertThrows(IllegalArgumentException.class, () -> AnnotatedToolScanner.scan(new DuplicateToolClass()));
