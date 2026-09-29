@@ -26,6 +26,7 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -252,5 +253,126 @@ public class ConversationMemoryTests {
 
         conversation.clearHistory();
         assertEquals(0, conversation.history().size());
+    }
+
+    @Test
+    void testRuleBasedCompactorTriggerAndFolding() {
+        CompactionPolicy policy = new CompactionPolicy(6, 2);
+        RuleBasedConversationCompactor compactor = new RuleBasedConversationCompactor(policy);
+
+        List<ChatMessage> history = new ArrayList<>();
+        history.add(ChatMessage.user("我想订酒店"));
+        history.add(ChatMessage.assistant("请问入住几晚？"));
+        history.add(ChatMessage.user("住2晚，10月1日到10月3日"));
+        history.add(ChatMessage.assistant("推荐豪华大床房，580元一晚"));
+        history.add(ChatMessage.user("可以，帮我订"));
+
+        // Below trigger count (5 < 6), no compaction
+        List<ChatMessage> uncompacted = compactor.compact(history);
+        assertEquals(5, uncompacted.size());
+
+        // Add 6th message, reaching trigger count
+        history.add(ChatMessage.assistant("好的，请提供入住人姓名"));
+        List<ChatMessage> compacted = compactor.compact(history);
+
+        // 1 summary message + 2 recent messages = 3 messages total
+        assertEquals(3, compacted.size());
+        assertEquals(ChatMessage.Role.SYSTEM, compacted.get(0).role());
+        assertTrue(compacted.get(0).content().contains("【前文对话历史背景摘要】"));
+        assertTrue(compacted.get(0).content().contains("我想订酒店"));
+        assertTrue(compacted.get(0).content().contains("豪华大床房"));
+
+        // Recent turns retained verbatim
+        assertEquals("可以，帮我订", compacted.get(1).content());
+        assertEquals(ChatMessage.Role.USER, compacted.get(1).role());
+        assertEquals("好的，请提供入住人姓名", compacted.get(2).content());
+        assertEquals(ChatMessage.Role.ASSISTANT, compacted.get(2).role());
+    }
+
+    @Test
+    void testFileBasedConversationMemoryPersistence() throws IOException {
+        Path memoryDir = tempDir.resolve("persistent-memory");
+        FileBasedConversationMemory memory1 = new FileBasedConversationMemory(memoryDir);
+
+        String convId = "persisted-conv-123";
+        memory1.append(convId, ChatMessage.user("你好，我是张先生"));
+        memory1.append(convId, ChatMessage.assistant("张先生您好，有什么可以为您服务？"));
+
+        assertEquals(2, memory1.getHistory(convId).size());
+
+        // Simulate server restart: new instance pointing to same directory
+        FileBasedConversationMemory memory2 = new FileBasedConversationMemory(memoryDir);
+        List<ChatMessage> recovered = memory2.getHistory(convId);
+        assertEquals(2, recovered.size());
+        assertEquals("你好，我是张先生", recovered.get(0).content());
+        assertEquals("张先生您好，有什么可以为您服务？", recovered.get(1).content());
+
+        // Clear removes file from disk
+        memory2.clear(convId);
+        assertEquals(0, memory2.getHistory(convId).size());
+
+        FileBasedConversationMemory memory3 = new FileBasedConversationMemory(memoryDir);
+        assertEquals(0, memory3.getHistory(convId).size());
+    }
+
+    @Test
+    void testUserProfileMemoryStorageAndRetrieval() {
+        UserProfileMemory profileMemory = new InMemoryUserProfileMemory();
+        String userId = "user-vip-007";
+
+        assertTrue(profileMemory.getProfile(userId).isEmpty());
+
+        profileMemory.setAttribute(userId, "preferredRoomType", "DELUXE_DOUBLE");
+        profileMemory.setAttribute(userId, "smokingPreference", "NON_SMOKING");
+
+        assertEquals(Optional.of("DELUXE_DOUBLE"), profileMemory.getAttribute(userId, "preferredRoomType"));
+        assertEquals(Optional.of("NON_SMOKING"), profileMemory.getAttribute(userId, "smokingPreference"));
+        assertEquals(2, profileMemory.getProfile(userId).size());
+
+        profileMemory.clearProfile(userId);
+        assertTrue(profileMemory.getProfile(userId).isEmpty());
+        assertEquals(0, profileMemory.activeProfileCount());
+    }
+
+    @Test
+    void testUserProfileInjectionIntoRunnerInstructions() {
+        AtomicReference<String> capturedInstructions = new AtomicReference<>("");
+
+        ModelGateway mockGateway = new ModelGateway() {
+            @Override
+            public ModelSession openSession(String instructions, String goal, List<ToolDefinition> tools) {
+                return openSession(instructions, List.of(), goal, tools);
+            }
+
+            @Override
+            public ModelSession openSession(String instructions, List<ChatMessage> history, String goal, List<ToolDefinition> tools) {
+                capturedInstructions.set(instructions);
+                return new ModelSession() {
+                    @Override
+                    public ModelResponse nextResponse(Duration timeout) {
+                        return new ModelResponse("OK", List.of(), ModelResponse.FinishReason.STOP, Optional.empty());
+                    }
+                    @Override public void appendToolResult(String callId, ToolOutcome outcome) {}
+                    @Override public void appendUserMessage(String message) {}
+                    @Override public void appendRuntimeFeedback(String feedback) {}
+                    @Override public long estimatedInputTokens() { return 50; }
+                    @Override public void close() {}
+                };
+            }
+        };
+
+        DefaultAgentRunner runner = new DefaultAgentRunner(mockGateway, new ToolCatalog(List.of()), eventSink);
+        String userId = "guest-zhangsan";
+        runner.userProfiles().setAttribute(userId, "preferredFloor", "HIGH_FLOOR");
+        runner.userProfiles().setAttribute(userId, "roomType", "SUITE");
+
+        // Run with userId
+        RunRequest req = new RunRequest("我想预订下周房间", workspace, "conv-user-1", userId);
+        runner.chat(spec, req);
+
+        String instructions = capturedInstructions.get();
+        assertTrue(instructions.contains("【用户长期画像与偏好设置】"));
+        assertTrue(instructions.contains("preferredFloor: HIGH_FLOOR"));
+        assertTrue(instructions.contains("roomType: SUITE"));
     }
 }

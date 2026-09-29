@@ -41,18 +41,39 @@ public class AgentConfiguration {
     }
 
     @Bean
+    @ConditionalOnMissingBean(com.agent.agentcorelab.memory.ConversationCompactor.class)
+    public com.agent.agentcorelab.memory.ConversationCompactor conversationCompactor() {
+        return new com.agent.agentcorelab.memory.RuleBasedConversationCompactor();
+    }
+
+    @Bean
     @ConditionalOnMissingBean(ConversationMemory.class)
-    public ConversationMemory conversationMemory() {
-        return new InMemoryConversationMemory();
+    public ConversationMemory conversationMemory(ObjectProvider<com.agent.agentcorelab.memory.ConversationCompactor> compactorProvider) {
+        com.agent.agentcorelab.memory.ConversationCompactor compactor = compactorProvider.getIfAvailable(
+                com.agent.agentcorelab.memory.RuleBasedConversationCompactor::new);
+        return new InMemoryConversationMemory(
+                InMemoryConversationMemory.DEFAULT_MAX_CONVERSATIONS,
+                InMemoryConversationMemory.DEFAULT_MAX_MESSAGES_PER_CONVERSATION,
+                compactor
+        );
+    }
+
+    @Bean
+    @ConditionalOnMissingBean(com.agent.agentcorelab.memory.UserProfileMemory.class)
+    public com.agent.agentcorelab.memory.UserProfileMemory userProfileMemory() {
+        return new com.agent.agentcorelab.memory.InMemoryUserProfileMemory();
     }
 
     @Bean
     @ConditionalOnBean(ModelGateway.class)
     @ConditionalOnMissingBean(AgentRunnerFactory.class)
     public AgentRunnerFactory agentRunnerFactory(ModelGateway model, ToolCatalog tools, RunEventSink events,
-                                                 ObjectProvider<ConversationMemory> memoryProvider) {
+                                                 ObjectProvider<ConversationMemory> memoryProvider,
+                                                 ObjectProvider<com.agent.agentcorelab.memory.UserProfileMemory> userProfileProvider) {
         ConversationMemory memory = memoryProvider.getIfAvailable(InMemoryConversationMemory::new);
-        return () -> new DefaultAgentRunner(model, tools, events, memory);
+        com.agent.agentcorelab.memory.UserProfileMemory profiles = userProfileProvider.getIfAvailable(
+                com.agent.agentcorelab.memory.InMemoryUserProfileMemory::new);
+        return () -> new DefaultAgentRunner(model, tools, events, memory, profiles);
     }
 
     @Bean

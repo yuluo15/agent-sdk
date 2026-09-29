@@ -134,4 +134,11 @@ public interface AgentRunner {
     default com.agent.agentcorelab.memory.ConversationMemory memory() {
         return null;
     }
+
+    /**
+     * Returns the user profile memory manager if supported by this runner.
+     */
+    default com.agent.agentcorelab.memory.UserProfileMemory userProfiles() {
+        return null;
+    }
 }

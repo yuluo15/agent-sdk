@@ -23,6 +23,8 @@ import com.agent.agentcorelab.trace.RunEventSink;
 import com.agent.agentcorelab.memory.ChatMessage;
 import com.agent.agentcorelab.memory.ConversationMemory;
 import com.agent.agentcorelab.memory.InMemoryConversationMemory;
+import com.agent.agentcorelab.memory.UserProfileMemory;
+import com.agent.agentcorelab.memory.InMemoryUserProfileMemory;
 import com.agent.agentcorelab.workspace.Artifact;
 import com.agent.agentcorelab.workspace.WorkspaceException;
 import com.agent.agentcorelab.workspace.WorkspaceSession;
@@ -64,6 +66,7 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
     private final ToolCatalog tools;
     private final RunEventSink events;
     private final ConversationMemory memory;
+    private final UserProfileMemory userProfiles;
     private final LongSupplier nanoTime;
     private final int maxActiveRuns;
     private final ReentrantLock owner = new ReentrantLock();
@@ -72,34 +75,47 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
     private volatile boolean closed;
 
     public DefaultAgentRunner(ModelGateway model, ToolCatalog tools, RunEventSink events) {
-        this(model, tools, events, new InMemoryConversationMemory(), System::nanoTime, DEFAULT_MAX_ACTIVE_RUNS);
+        this(model, tools, events, new InMemoryConversationMemory(), new InMemoryUserProfileMemory(), System::nanoTime, DEFAULT_MAX_ACTIVE_RUNS);
     }
 
     public DefaultAgentRunner(ModelGateway model, ToolCatalog tools, RunEventSink events, ConversationMemory memory) {
-        this(model, tools, events, memory, System::nanoTime, DEFAULT_MAX_ACTIVE_RUNS);
+        this(model, tools, events, memory, new InMemoryUserProfileMemory(), System::nanoTime, DEFAULT_MAX_ACTIVE_RUNS);
+    }
+
+    public DefaultAgentRunner(ModelGateway model, ToolCatalog tools, RunEventSink events, ConversationMemory memory, UserProfileMemory userProfiles) {
+        this(model, tools, events, memory, userProfiles, System::nanoTime, DEFAULT_MAX_ACTIVE_RUNS);
     }
 
     public DefaultAgentRunner(ModelGateway model, ToolCatalog tools, RunEventSink events, int maxActiveRuns) {
-        this(model, tools, events, new InMemoryConversationMemory(), System::nanoTime, maxActiveRuns);
+        this(model, tools, events, new InMemoryConversationMemory(), new InMemoryUserProfileMemory(), System::nanoTime, maxActiveRuns);
     }
 
     public DefaultAgentRunner(ModelGateway model, ToolCatalog tools, RunEventSink events, ConversationMemory memory, int maxActiveRuns) {
-        this(model, tools, events, memory, System::nanoTime, maxActiveRuns);
+        this(model, tools, events, memory, new InMemoryUserProfileMemory(), System::nanoTime, maxActiveRuns);
+    }
+
+    public DefaultAgentRunner(ModelGateway model, ToolCatalog tools, RunEventSink events, ConversationMemory memory, UserProfileMemory userProfiles, int maxActiveRuns) {
+        this(model, tools, events, memory, userProfiles, System::nanoTime, maxActiveRuns);
     }
 
     DefaultAgentRunner(ModelGateway model, ToolCatalog tools, RunEventSink events, LongSupplier nanoTime) {
-        this(model, tools, events, new InMemoryConversationMemory(), nanoTime, DEFAULT_MAX_ACTIVE_RUNS);
+        this(model, tools, events, new InMemoryConversationMemory(), new InMemoryUserProfileMemory(), nanoTime, DEFAULT_MAX_ACTIVE_RUNS);
     }
 
     DefaultAgentRunner(ModelGateway model, ToolCatalog tools, RunEventSink events, LongSupplier nanoTime, int maxActiveRuns) {
-        this(model, tools, events, new InMemoryConversationMemory(), nanoTime, maxActiveRuns);
+        this(model, tools, events, new InMemoryConversationMemory(), new InMemoryUserProfileMemory(), nanoTime, maxActiveRuns);
     }
 
     DefaultAgentRunner(ModelGateway model, ToolCatalog tools, RunEventSink events, ConversationMemory memory, LongSupplier nanoTime, int maxActiveRuns) {
+        this(model, tools, events, memory, new InMemoryUserProfileMemory(), nanoTime, maxActiveRuns);
+    }
+
+    DefaultAgentRunner(ModelGateway model, ToolCatalog tools, RunEventSink events, ConversationMemory memory, UserProfileMemory userProfiles, LongSupplier nanoTime, int maxActiveRuns) {
         this.model = model;
         this.tools = tools;
         this.events = events;
         this.memory = memory != null ? memory : new InMemoryConversationMemory();
+        this.userProfiles = userProfiles != null ? userProfiles : new InMemoryUserProfileMemory();
         this.nanoTime = nanoTime;
         this.maxActiveRuns = maxActiveRuns > 0 ? maxActiveRuns : DEFAULT_MAX_ACTIVE_RUNS;
     }
@@ -170,7 +186,16 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
                 List<ChatMessage> history = request.conversationId()
                         .map(memory::getHistory)
                         .orElse(List.of());
-                state.session = model.openSession(rules + "\n" + agent.instructions(), history, userPrompt,
+                String userProfileContext = request.userId()
+                        .map(userProfiles::getProfile)
+                        .filter(p -> !p.isEmpty())
+                        .map(p -> {
+                            StringBuilder sb = new StringBuilder("\n\n【用户长期画像与偏好设置】\n");
+                            p.forEach((k, v) -> sb.append("- ").append(k).append(": ").append(v).append("\n"));
+                            return sb.toString();
+                        })
+                        .orElse("");
+                state.session = model.openSession(rules + "\n" + agent.instructions() + userProfileContext, history, userPrompt,
                         selected.definitions());
                 request.conversationId().ifPresent(cid ->
                         memory.append(cid, ChatMessage.user(request.goal())));
@@ -280,6 +305,11 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
     @Override
     public ConversationMemory memory() {
         return memory;
+    }
+
+    @Override
+    public UserProfileMemory userProfiles() {
+        return userProfiles;
     }
 
     private long estimateTokens(String text) {

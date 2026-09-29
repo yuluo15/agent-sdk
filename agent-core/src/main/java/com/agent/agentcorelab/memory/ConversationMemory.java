@@ -31,6 +31,23 @@ public interface ConversationMemory {
     void clear(String conversationId);
 
     /**
+     * Explicitly triggers compaction on the specified conversation history if a compactor is configured.
+     *
+     * @param conversationId unique conversation identifier
+     */
+    default void compact(String conversationId) {}
+
+    /**
+     * Retrieves the active summary message for the given conversation, if one has been generated.
+     *
+     * @param conversationId unique conversation identifier
+     * @return optional summary message
+     */
+    default java.util.Optional<ChatMessage> getSummary(String conversationId) {
+        return java.util.Optional.empty();
+    }
+
+    /**
      * Returns the count of active conversations currently tracked in memory.
      */
     int activeConversationCount();
