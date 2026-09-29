@@ -5,6 +5,48 @@
 
 ---
 
+## [1.1.0-SNAPSHOT] - 2026-09-29
+
+> **里程碑定位**：**阶段 3.0 - MCP 标准化与企业能力生态 (Model Context Protocol & Enterprise Skills)**。  
+> 标志着 SDK 正式具备与 Anthropic MCP 生态无缝互通的工业级能力，支持接入外部海量生态工具（文件系统、Git、数据库、网络搜索等），并引入企业级标准化作业程序（Skills & SOP）自主加载与前提校验闭环。
+
+### 新增核心模块
+```xml
+<dependency>
+    <groupId>com.agent</groupId>
+    <artifactId>agent-mcp-adapter</artifactId>
+    <version>1.1.0-SNAPSHOT</version>
+</dependency>
+```
+
+### 核心特性矩阵
+
+#### 1. 纯净自主可控的 MCP 协议栈 (`agent-mcp-adapter`)
+* **零臃肿三方依赖**：完全基于 Java 21 与 Jackson 自研实现 Model Context Protocol (MCP `2024-11-05`) 标准规范，无任何第三方 MCP 框架强绑定；
+* **强类型不可变消息帧**：全面采用 Java 21 `sealed interface`、`record` 与模式匹配，封装 JSON-RPC 2.0 请求、响应、通知与错误对象；
+* **双模传输层 SPI (`McpTransport`)**：
+  * **`StdioProcessTransport`**：生产级子进程传输，利用 Java 21 虚拟线程 (`Thread.ofVirtual()`) 高并发读取标准输入输出，内嵌 JVM 停机钩子与多级子进程递归清理看门狗（防僵尸进程）；
+  * **`InMemoryMcpTransport`**：支持快速单测与内存级嵌入式模拟；
+* **高可用客户端 (`McpClient` / `DefaultMcpClient`)**：管理 `CREATED` -> `INITIALIZING` -> `READY` -> `CLOSED` 严格状态流转，支持握手初始化、工具枚举、工具执行与 `ping` 心跳探测。
+
+#### 2. 无缝工具桥接与上下文沙箱外溢
+* **标准工具适配器 (`McpToolAdapter`)**：自动将远端 MCP 工具转换为原生 SDK `Tool` 合约；规范化工具入参校验，保障工具命名规范与合规性；
+* **工具前缀隔离与过滤**：支持指定服务名前缀（如 `sqlite_`、`git_`）防止不同 MCP Server 工具命名冲突；支持白名单/黑名单过滤；
+* **风险等级映射 (`RiskLevel`)**：可根据工具名称前缀或规则自动标定高危操作（如写表、删除、执行脚本），无缝接入 SDK 既有的人机协同 (HITL) 审批流水线；
+* **沙箱大结果集安全外溢**：远端工具返回海量结构体或超大文本时，自动触发 `ToolExecutor` + `WorkspaceSession` 存储外溢机制，将大结果保存为工作区条目并提供增量切片读取，彻底杜绝 Token 撑爆。
+
+#### 3. 企业级能力生态与动态 SOP 体系 (`com.agent.agentcorelab.mcp.skill`)
+* **标准化企业技能实体 (`SkillDefinition`)**：将企业复杂业务逻辑规范化为可插拔的技能资产，内含业务描述、标签分类、前置依赖工具列表 (`prerequisiteTools`) 与标准操作指导书 (`sop`)；
+* **企业技能注册中心 (`SkillRegistry` / `DefaultSkillRegistry`)**：线程安全、并发友好的中央技能池，支持按标签聚合、模糊搜索与实时查询；
+* **精简 Prompt 技能引流 (`SkillPromptContributor`)**：仅在系统提示词末尾注入紧凑的技能索引与一句话导读，零 Token 负担；
+* **智能体自主咨询系统工具 (`SkillConsultantTool` / `consult_skill`)**：大模型可在识别到特定任务需求时，主动调用 `consult_skill` 查询对应技能的完整 SOP，并自动获得运行环境中前置工具依赖的完备性诊断。
+
+#### 4. Spring Boot 声明式自动装配 (`agent-spring-boot-starter`)
+* **开箱即用属性配置 (`AgentMcpProperties`)**：在 `application.yml` 中即可配置多个远端 MCP 进程；
+* **集中化生命周期管理 (`McpServerManager`)**：随 Spring 上下文容器启动自动探活并枚举工具，优雅停机时统一回收全部子进程资源。
+
+---
+
 ## [1.0.0] - 2026-09-29
 
 > **里程碑定位**：**首个企业级生产商用就绪基线 (Production-Ready Baseline)**。  

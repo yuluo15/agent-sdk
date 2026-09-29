@@ -10,13 +10,14 @@
     </parent>
     <groupId>com.agent</groupId>
     <artifactId>agent-sdk</artifactId>
-    <version>1.0.0</version>
+    <version>1.1.0-SNAPSHOT</version>
     <packaging>pom</packaging>
     <name>Agent SDK</name>
     <description>Reusable agent runtime, model adapter, Spring integration and existing samples</description>
     <modules>
         <module>agent-core</module>
         <module>agent-model-spring-ai</module>
+        <module>agent-mcp-adapter</module>
         <module>agent-spring-boot-starter</module>
         <module>agent-samples</module>
     </modules>
@@ -39,6 +40,11 @@
             <dependency>
                 <groupId>com.agent</groupId>
                 <artifactId>agent-model-spring-ai</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.agent</groupId>
+                <artifactId>agent-mcp-adapter</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>

@@ -1,2 +1,3 @@
 com.agent.agentcorelab.bootstrap.ModelConfiguration
 com.agent.agentcorelab.bootstrap.AgentConfiguration
+com.agent.agentcorelab.bootstrap.mcp.McpAutoConfiguration
