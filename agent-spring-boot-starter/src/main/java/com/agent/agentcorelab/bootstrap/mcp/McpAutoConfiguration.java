@@ -93,15 +93,18 @@ public class McpAutoConfiguration {
                 if (config.getToolPrefix() != null && !config.getToolPrefix().isBlank()) {
                     bridgeBuilder.toolPrefix(config.getToolPrefix());
                 }
+                String prefix = config.getToolPrefix() != null ? config.getToolPrefix() : "";
                 if (!config.getIncludeTools().isEmpty()) {
-                    bridgeBuilder.includeOnly(new HashSet<>(config.getIncludeTools()));
+                    Set<String> include = Set.copyOf(config.getIncludeTools());
+                    bridgeBuilder.filter(name -> include.contains(name) || include.contains(prefix + name));
                 }
                 if (!config.getExcludeTools().isEmpty()) {
-                    bridgeBuilder.exclude(new HashSet<>(config.getExcludeTools()));
+                    Set<String> exclude = Set.copyOf(config.getExcludeTools());
+                    bridgeBuilder.filter(name -> !exclude.contains(name) && !exclude.contains(prefix + name));
                 }
                 if (!config.getHighRiskTools().isEmpty()) {
                     Set<String> highRisk = Set.copyOf(config.getHighRiskTools());
-                    bridgeBuilder.riskResolver(name -> highRisk.contains(name) ? RiskLevel.HIGH_RISK : RiskLevel.READ_ONLY);
+                    bridgeBuilder.riskResolver(name -> (highRisk.contains(name) || highRisk.contains(prefix + name)) ? RiskLevel.HIGH_RISK : RiskLevel.READ_ONLY);
                 }
 
                 McpServerBridge bridge = bridgeBuilder.build();

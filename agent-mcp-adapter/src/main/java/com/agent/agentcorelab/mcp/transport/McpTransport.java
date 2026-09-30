@@ -5,6 +5,7 @@ import com.agent.agentcorelab.mcp.protocol.JsonRpcNotification;
 import com.agent.agentcorelab.mcp.protocol.JsonRpcRequest;
 import com.agent.agentcorelab.mcp.protocol.JsonRpcResponse;
 
+import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Consumer;
 
@@ -40,6 +41,20 @@ public interface McpTransport extends AutoCloseable {
      * Checks if the transport is active, connected, and healthy.
      */
     boolean isAlive();
+
+    /**
+     * Returns the underlying process handle if this transport manages an external OS process.
+     */
+    default Optional<ProcessHandle> processHandle() {
+        return Optional.empty();
+    }
+
+    /**
+     * Returns the OS process ID if this transport manages an external OS process.
+     */
+    default Optional<Long> pid() {
+        return processHandle().map(ProcessHandle::pid);
+    }
 
     /**
      * Closes the transport, destroying underlying processes, sockets, and threads.

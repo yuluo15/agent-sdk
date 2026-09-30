@@ -11,6 +11,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
@@ -49,6 +50,23 @@ public final class McpServerBridge implements AutoCloseable {
 
     public String serverName() {
         return client.serverName();
+    }
+
+    /**
+     * Returns the underlying operating system process handle if this server runs via a local subprocess.
+     */
+    public Optional<ProcessHandle> processHandle() {
+        if (client != null && client.transport() != null) {
+            return client.transport().processHandle();
+        }
+        return Optional.empty();
+    }
+
+    /**
+     * Returns the process ID (PID) if this server runs via a local subprocess.
+     */
+    public Optional<Long> pid() {
+        return processHandle().map(ProcessHandle::pid);
     }
 
     /**

@@ -22,6 +22,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
@@ -198,6 +199,11 @@ public final class StdioProcessTransport implements McpTransport {
     @Override
     public boolean isAlive() {
         return !closed && process != null && process.isAlive();
+    }
+
+    @Override
+    public Optional<ProcessHandle> processHandle() {
+        return process != null ? Optional.of(process.toHandle()) : Optional.empty();
     }
 
     @Override

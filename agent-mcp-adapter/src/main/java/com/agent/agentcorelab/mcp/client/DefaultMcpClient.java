@@ -55,6 +55,11 @@ public final class DefaultMcpClient implements McpClient {
         return serverName;
     }
 
+    @Override
+    public McpTransport transport() {
+        return transport;
+    }
+
     private String nextId() {
         return serverName + "-" + idCounter.getAndIncrement();
     }

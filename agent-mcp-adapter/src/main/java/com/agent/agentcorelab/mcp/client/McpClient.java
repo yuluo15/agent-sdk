@@ -3,6 +3,7 @@ package com.agent.agentcorelab.mcp.client;
 import com.agent.agentcorelab.mcp.protocol.McpInitializeResult;
 import com.agent.agentcorelab.mcp.protocol.McpTool;
 import com.agent.agentcorelab.mcp.protocol.McpToolResult;
+import com.agent.agentcorelab.mcp.transport.McpTransport;
 import com.fasterxml.jackson.databind.JsonNode;
 
 import java.time.Duration;
@@ -62,6 +63,13 @@ public interface McpClient extends AutoCloseable {
      * Checks if the client has successfully initialized and is ready for tool calls.
      */
     boolean isConnected();
+
+    /**
+     * Returns the underlying transport instance, if available.
+     */
+    default McpTransport transport() {
+        return null;
+    }
 
     /**
      * Closes the client connection and releases transport resources.

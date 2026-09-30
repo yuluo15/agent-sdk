@@ -39,6 +39,20 @@ public final class McpServerManager implements AutoCloseable {
         return Optional.ofNullable(bridges.get(serverName));
     }
 
+    /**
+     * Returns the process ID (PID) of the specified MCP server if it runs as an external subprocess.
+     */
+    public synchronized Optional<Long> getProcessPid(String serverName) {
+        return getBridge(serverName).flatMap(McpServerBridge::pid);
+    }
+
+    /**
+     * Returns the {@link ProcessHandle} of the specified MCP server if it runs as an external subprocess.
+     */
+    public synchronized Optional<ProcessHandle> getProcessHandle(String serverName) {
+        return getBridge(serverName).flatMap(McpServerBridge::processHandle);
+    }
+
     public synchronized List<McpServerBridge> listBridges() {
         return List.copyOf(bridges.values());
     }
