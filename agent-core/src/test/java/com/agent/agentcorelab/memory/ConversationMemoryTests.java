@@ -316,6 +316,50 @@ public class ConversationMemoryTests {
     }
 
     @Test
+    void testFileBasedConversationMemoryFailOnErrorFalseGracefullyRecoversFromMalformedFile() throws IOException {
+        Path memoryDir = tempDir.resolve("resilient-memory");
+        Files.createDirectories(memoryDir);
+        String convId = "malformed-conv-01";
+        Path jsonFile = memoryDir.resolve(convId + ".json");
+        Files.writeString(jsonFile, "{ broken json content !!!");
+
+        // With failOnError=false (default)
+        FileBasedConversationMemory memory = new FileBasedConversationMemory(memoryDir, false);
+        assertFalse(memory.isFailOnError());
+        assertEquals(memoryDir, memory.storageDir());
+
+        // Loading malformed file should not throw, returns empty history and logs warning
+        List<ChatMessage> history = memory.getHistory(convId);
+        assertTrue(history.isEmpty());
+
+        // Subsequent append should heal the file by rewriting valid content
+        memory.append(convId, ChatMessage.user("新问题"));
+        assertEquals(1, memory.getHistory(convId).size());
+        assertEquals("新问题", memory.getHistory(convId).get(0).content());
+
+        // Verify disk content is now valid JSON
+        String diskContent = Files.readString(jsonFile);
+        assertTrue(diskContent.contains("新问题"));
+    }
+
+    @Test
+    void testFileBasedConversationMemoryFailOnErrorTruePropagatesLoadError() throws IOException {
+        Path memoryDir = tempDir.resolve("strict-memory");
+        Files.createDirectories(memoryDir);
+        String convId = "malformed-conv-02";
+        Path jsonFile = memoryDir.resolve(convId + ".json");
+        Files.writeString(jsonFile, "invalid:not-json");
+
+        // With failOnError=true
+        FileBasedConversationMemory memory = new FileBasedConversationMemory(memoryDir, true);
+        assertTrue(memory.isFailOnError());
+
+        // Must throw IllegalStateException wrapping the JSON parsing failure
+        IllegalStateException ex = assertThrows(IllegalStateException.class, () -> memory.getHistory(convId));
+        assertTrue(ex.getMessage().contains("Failed to load conversation memory from file"));
+    }
+
+    @Test
     void testUserProfileMemoryStorageAndRetrieval() {
         UserProfileMemory profileMemory = new InMemoryUserProfileMemory();
         String userId = "user-vip-007";

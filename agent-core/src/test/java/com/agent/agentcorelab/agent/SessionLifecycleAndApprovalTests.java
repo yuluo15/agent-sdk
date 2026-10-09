@@ -272,13 +272,115 @@ class SessionLifecycleAndApprovalTests {
         assertTrue(runner.activeRunCount() <= 3);
     }
 
+    @Test
+    void testRejectBatchClosesAllRemainingToolCallsWithModelSession() {
+        AtomicInteger highRiskExecs = new AtomicInteger();
+        Tool rebootTool = createHighRiskTool("rebootServer", highRiskExecs);
+        Tool statusTool = new Tool() {
+            @Override
+            public ToolDefinition definition() {
+                return new ToolDefinition("checkStatus", "Check server status", "{\"type\":\"object\"}", RiskLevel.READ_ONLY);
+            }
+
+            @Override
+            public ToolOutcome execute(String argumentsJson, ToolContext context) {
+                return new ToolOutcome.Success("{\"status\":\"HEALTHY\"}");
+            }
+        };
+        Tool notifyTool = new Tool() {
+            @Override
+            public ToolDefinition definition() {
+                return new ToolDefinition("notifySlack", "Send slack notification", "{\"type\":\"object\"}", RiskLevel.READ_ONLY);
+            }
+
+            @Override
+            public ToolOutcome execute(String argumentsJson, ToolContext context) {
+                return new ToolOutcome.Success("{\"sent\":true}");
+            }
+        };
+
+        ToolCatalog catalog = new ToolCatalog(List.of(rebootTool, statusTool, notifyTool, new ClarificationTool()));
+        DefaultAgentRunner runner = new DefaultAgentRunner((inst, g, defs) -> session, catalog, events::add);
+        AgentSpec spec = new AgentSpec("ops-agent", "Perform IT ops",
+                Set.of("rebootServer", "checkStatus", "notifySlack"), limits,
+                (s, a) -> CompletionCheck.Result.satisfied());
+
+        session.enableStrictProtocol(true);
+
+        // Turn 1: Model issues a batch of 3 tool calls:
+        // 1. checkStatus (executed immediately)
+        // 2. rebootServer (HIGH_RISK -> paused for approval)
+        // 3. notifySlack (pending in batch)
+        session.enqueue(calls(
+                new ToolCall("call_1", "checkStatus", "{}"),
+                new ToolCall("call_2", "rebootServer", "{\"target\":\"prod-cluster\"}"),
+                new ToolCall("call_3", "notifySlack", "{\"channel\":\"ops\"}")
+        ));
+
+        RunResult step1 = runner.run(spec, new RunRequest("Safely perform restart and notify", workspace), chunks::add);
+
+        assertEquals(RunStatus.WAITING_APPROVAL, step1.snapshot().status());
+        assertEquals(0, highRiskExecs.get());
+        assertTrue(step1.snapshot().pendingApproval().isPresent());
+        ApprovalRequest approvalReq = step1.snapshot().pendingApproval().get();
+        assertEquals("call_2", approvalReq.callId());
+        assertEquals("rebootServer", approvalReq.toolName());
+
+        // Step 2: Next response from model after rejections are fed back
+        session.enqueue(text("Aborted remaining maintenance operations due to user rejection."));
+
+        // User rejects the high-risk tool call
+        RunResult step2 = runner.reject(step1.snapshot().runId(), approvalReq.approvalId(), "Maintenance window expired", chunks::add);
+
+        assertEquals(RunStatus.COMPLETED, step2.snapshot().status());
+        assertEquals(0, highRiskExecs.get(), "High-risk tool must never execute upon rejection");
+        assertEquals("Aborted remaining maintenance operations due to user rejection.", step2.message());
+
+        // Verify that all 3 tool calls were registered in the session
+        assertTrue(session.recordedOutcomes().containsKey("call_1"), "call_1 should have succeeded");
+        assertTrue(session.recordedOutcomes().get("call_1") instanceof ToolOutcome.Success);
+
+        assertTrue(session.recordedOutcomes().containsKey("call_2"), "call_2 should have ACTION_REJECTED");
+        ToolOutcome outcome2 = session.recordedOutcomes().get("call_2");
+        assertInstanceOf(ToolOutcome.Failure.class, outcome2);
+        assertEquals("ACTION_REJECTED", ((ToolOutcome.Failure) outcome2).code());
+        assertTrue(((ToolOutcome.Failure) outcome2).message().contains("Maintenance window expired"));
+
+        assertTrue(session.recordedOutcomes().containsKey("call_3"), "call_3 should have ACTION_SKIPPED");
+        ToolOutcome outcome3 = session.recordedOutcomes().get("call_3");
+        assertInstanceOf(ToolOutcome.Failure.class, outcome3);
+        assertEquals("ACTION_SKIPPED", ((ToolOutcome.Failure) outcome3).code());
+        assertTrue(((ToolOutcome.Failure) outcome3).message().contains("preceding action 'rebootServer' in batch was rejected"));
+
+        // Verify stream chunks contain toolFinished for call_2 and call_3
+        assertTrue(chunks.stream().anyMatch(c -> c.type() == RunStreamChunk.Type.TOOL_FINISHED
+                && "call_2".equals(c.callId()) && "ACTION_REJECTED".equals(c.content())));
+        assertTrue(chunks.stream().anyMatch(c -> c.type() == RunStreamChunk.Type.TOOL_FINISHED
+                && "call_3".equals(c.callId()) && "ACTION_SKIPPED".equals(c.content())));
+
+        // Verify trace events contain toolFinished for call_3
+        assertTrue(events.stream().anyMatch(e -> e.type() == RunEvent.Type.TOOL_FINISHED
+                && e.summary().contains("ACTION_SKIPPED")));
+    }
+
     private static final class MockModelSession implements ModelSession {
         private final Queue<ModelResponse> responses = new ArrayDeque<>();
         private final List<String> userMessages = new ArrayList<>();
         private final List<String> toolResults = new ArrayList<>();
+        private final Map<String, ToolOutcome> recordedOutcomes = new java.util.LinkedHashMap<>();
+        private final Set<String> pendingToolCalls = new java.util.LinkedHashSet<>();
+        private boolean strictProtocol = false;
 
         void enqueue(ModelResponse response) {
             responses.add(response);
+        }
+
+        void enableStrictProtocol(boolean strict) {
+            this.strictProtocol = strict;
+        }
+
+        Map<String, ToolOutcome> recordedOutcomes() {
+            return recordedOutcomes;
         }
 
         @Override
@@ -288,9 +390,17 @@ class SessionLifecycleAndApprovalTests {
 
         @Override
         public ModelResponse nextResponse(Duration timeout, Consumer<ModelStreamChunk> listener) {
+            if (strictProtocol && !pendingToolCalls.isEmpty()) {
+                throw new IllegalStateException("All pending tool callIds must be answered before continuing: " + pendingToolCalls);
+            }
             ModelResponse response = responses.poll();
             if (response == null) {
                 return new ModelResponse("Default mock completion.", List.of(), ModelResponse.FinishReason.STOP, Optional.empty());
+            }
+            if (response.toolCalls() != null) {
+                for (ToolCall tc : response.toolCalls()) {
+                    pendingToolCalls.add(tc.callId());
+                }
             }
             if (listener != null && response.text() != null && !response.text().isBlank()) {
                 listener.accept(ModelStreamChunk.text(response.text()));
@@ -305,7 +415,9 @@ class SessionLifecycleAndApprovalTests {
 
         @Override
         public void appendToolResult(String callId, ToolOutcome outcome) {
+            pendingToolCalls.remove(callId);
             toolResults.add(callId + ":" + outcome.getClass().getSimpleName());
+            recordedOutcomes.put(callId, outcome);
         }
 
         @Override

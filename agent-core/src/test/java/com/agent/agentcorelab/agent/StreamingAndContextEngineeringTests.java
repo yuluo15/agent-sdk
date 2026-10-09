@@ -6,6 +6,7 @@ import com.agent.agentcorelab.model.ModelSession;
 import com.agent.agentcorelab.model.ModelStreamChunk;
 import com.agent.agentcorelab.tool.ClarificationTool;
 import com.agent.agentcorelab.tool.ReadWorkItemTool;
+import com.agent.agentcorelab.tool.RiskLevel;
 import com.agent.agentcorelab.tool.Tool;
 import com.agent.agentcorelab.tool.ToolCall;
 import com.agent.agentcorelab.tool.ToolCatalog;
@@ -13,6 +14,7 @@ import com.agent.agentcorelab.tool.ToolContext;
 import com.agent.agentcorelab.tool.ToolDefinition;
 import com.agent.agentcorelab.tool.ToolJson;
 import com.agent.agentcorelab.tool.ToolOutcome;
+import com.agent.agentcorelab.trace.RunEventSink;
 import com.agent.agentcorelab.workspace.Workspace;
 import com.agent.agentcorelab.workspace.WorkspaceSession;
 import org.junit.jupiter.api.BeforeEach;
@@ -31,6 +33,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -214,6 +217,69 @@ class StreamingAndContextEngineeringTests {
 
         assertEquals(RunStatus.COMPLETED, result.snapshot().status());
         assertTrue(session.compactedCalled, "compactContext should have been triggered when token count was high");
+    }
+
+    @Test
+    void testStreamChunkListenerExceptionIsFaultIsolated() {
+        AgentSpec spec = new AgentSpec("fault-tolerant-stream", "Stream with resilient runner",
+                Set.of(largeDataTool.definition().name(), ClarificationTool.NAME),
+                limits, completion);
+
+        // Turn 1: tool call
+        session.enqueue(new ModelResponse("", List.of(new ToolCall("call_1", largeDataTool.definition().name(), "{\"size\":3}")),
+                ModelResponse.FinishReason.TOOL_CALLS, Optional.empty()));
+        // Turn 2: completion
+        session.enqueue(new ModelResponse("Response completed successfully.", List.of(),
+                ModelResponse.FinishReason.STOP, Optional.empty()));
+
+        // Consumer throws RuntimeException on every chunk
+        Consumer<RunStreamChunk> faultyListener = chunk -> {
+            throw new RuntimeException("Simulated SSE / UI socket broken pipe");
+        };
+
+        // Execution must NOT crash or abort prematurely
+        RunResult result = runner.run(spec, new RunRequest("Do safe run", workspace), faultyListener);
+
+        assertEquals(RunStatus.COMPLETED, result.snapshot().status());
+        assertEquals("Response completed successfully.", result.message());
+    }
+
+    @Test
+    void testApprovalAndRejectionStreamListenerExceptionIsFaultIsolated() {
+        AtomicInteger execCount = new AtomicInteger();
+        Tool highRiskTool = new Tool() {
+            @Override
+            public ToolDefinition definition() {
+                return new ToolDefinition("dangerousTool", "desc", "{\"type\":\"object\"}", RiskLevel.HIGH_RISK);
+            }
+            @Override
+            public ToolOutcome execute(String argumentsJson, ToolContext context) {
+                execCount.incrementAndGet();
+                return new ToolOutcome.Success("{\"ok\":true}");
+            }
+        };
+        DefaultAgentRunner runnerWithHighRisk = new DefaultAgentRunner((inst, g, defs) -> session,
+                new ToolCatalog(List.of(highRiskTool)), event -> {});
+        AgentSpec spec = new AgentSpec("hr-agent", "desc", Set.of("dangerousTool"), limits, completion);
+
+        // Turn 1: trigger high risk tool
+        session.enqueue(new ModelResponse("", List.of(new ToolCall("c1", "dangerousTool", "{}")),
+                ModelResponse.FinishReason.TOOL_CALLS, Optional.empty()));
+
+        Consumer<RunStreamChunk> throwingListener = chunk -> {
+            throw new RuntimeException("UI client disconnected");
+        };
+
+        RunResult r1 = runnerWithHighRisk.run(spec, new RunRequest("Dangerous task", workspace), throwingListener);
+        assertEquals(RunStatus.WAITING_APPROVAL, r1.snapshot().status());
+        String approvalId = r1.snapshot().pendingApproval().get().approvalId();
+
+        // Reject with throwing listener
+        session.enqueue(new ModelResponse("Action was rejected.", List.of(), ModelResponse.FinishReason.STOP, Optional.empty()));
+        RunResult r2 = runnerWithHighRisk.reject(r1.snapshot().runId(), approvalId, "Denied", throwingListener);
+        assertEquals(RunStatus.COMPLETED, r2.snapshot().status());
+        assertEquals(0, execCount.get());
+        assertEquals("Action was rejected.", r2.message());
     }
 
     // Helper classes

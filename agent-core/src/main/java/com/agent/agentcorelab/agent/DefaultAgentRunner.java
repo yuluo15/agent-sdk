@@ -59,8 +59,20 @@ import java.util.function.Consumer;
 import java.util.function.LongSupplier;
 
 public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
+    private static final System.Logger LOGGER = System.getLogger(DefaultAgentRunner.class.getName());
     public static final int DEFAULT_MAX_ACTIVE_RUNS = 1000;
     private static final String RUNTIME_RULES = ExecutionPolicy.DEFAULT_RUNTIME_RULES;
+
+    private static void safeEmit(Consumer<RunStreamChunk> listener, RunStreamChunk chunk) {
+        if (listener == null || chunk == null) {
+            return;
+        }
+        try {
+            listener.accept(chunk);
+        } catch (Throwable t) {
+            LOGGER.log(System.Logger.Level.WARNING, "Exception thrown by RunStreamChunk listener: {0}", t.getMessage(), t);
+        }
+    }
 
     private final ModelGateway model;
     private final ToolCatalog tools;
@@ -409,9 +421,7 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
 
             event(state, RunEvent.Type.TOOL_STARTED, Map.of("callId", call.callId(), "tool", call.name(),
                     "argumentsSha256", digest(call.argumentsJson())));
-            if (listener != null) {
-                listener.accept(RunStreamChunk.toolStarted(call.callId(), call.name(), Map.of("callId", call.callId())));
-            }
+            safeEmit(listener, RunStreamChunk.toolStarted(call.callId(), call.name(), Map.of("callId", call.callId())));
             ToolContext context = new ToolContext(state.id, state.request.workspace(),
                     Instant.now().plus(remaining(state)), state::isCancellationRequested,
                     artifact -> state.artifacts.add(artifact), state.resources);
@@ -485,7 +495,20 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
                     "User rejected action '" + call.name() + "': " + rejectionReason, false);
             accept(state, call, outcome, listener);
             if (calls != null && index + 1 < calls.size()) {
-                skipped(state, calls, index + 1);
+                for (int i = index + 1; i < calls.size(); i++) {
+                    ToolCall skippedCall = calls.get(i);
+                    ToolOutcome skippedOutcome = new ToolOutcome.Failure("ACTION_SKIPPED",
+                            "Tool call skipped because preceding action '" + call.name() + "' in batch was rejected: " + rejectionReason,
+                            false);
+                    state.observations.add(new RunSnapshot.Observation(skippedCall, skippedOutcome));
+                    state.session.appendToolResult(skippedCall.callId(), skippedOutcome);
+                    event(state, RunEvent.Type.TOOL_FINISHED, Map.of(
+                            "callId", skippedCall.callId(),
+                            "tool", skippedCall.name(),
+                            "outcome", "ACTION_SKIPPED"
+                    ));
+                    safeEmit(listener, RunStreamChunk.toolFinished(skippedCall.callId(), skippedCall.name(), "ACTION_SKIPPED"));
+                }
             }
         }, listener);
     }
@@ -548,10 +571,8 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
                     "goalVersion", revisedBrief.goalVersion(),
                     "objective", revisedBrief.objective()
             ));
-            if (listener != null) {
-                listener.accept(RunStreamChunk.briefUpdated(revisedBrief.goalVersion(),
-                        revisedBrief.objective(), revisedBrief.deliverables()));
-            }
+            safeEmit(listener, RunStreamChunk.briefUpdated(revisedBrief.goalVersion(),
+                    revisedBrief.objective(), revisedBrief.deliverables()));
             state.session.appendUserMessage("Goal revised to version " + revisedBrief.goalVersion() + ":\n"
                     + revisedBrief.toPromptBlock()
                     + "\nPlease update your plan with updatePlan and adapt your actions to meet the revised goal.");
@@ -605,10 +626,8 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
     private RunResult drive(State state, StartAction start, Consumer<RunStreamChunk> listener) {
         state.startedAt = nanoTime.getAsLong();
         state.active = true;
-        if (listener != null) {
-            listener.accept(RunStreamChunk.statusChanged(RunStatus.RUNNING));
-        }
         try {
+            safeEmit(listener, RunStreamChunk.statusChanged(RunStatus.RUNNING));
             if (!controlledStop(state)) {
                 start.run();
                 publish(state);
@@ -639,11 +658,11 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
                     ModelResponse response;
                     try {
                         response = state.session.nextResponse(min(limits.modelTimeout(), remaining(state)), chunk -> {
-                            if (listener != null && chunk != null && chunk.text() != null) {
+                            if (chunk != null && chunk.text() != null) {
                                 if (chunk.type() == ModelStreamChunk.Type.THINKING) {
-                                    listener.accept(RunStreamChunk.thinking(chunk.text()));
+                                    safeEmit(listener, RunStreamChunk.thinking(chunk.text()));
                                 } else {
-                                    listener.accept(RunStreamChunk.text(chunk.text()));
+                                    safeEmit(listener, RunStreamChunk.text(chunk.text()));
                                 }
                             }
                         });
@@ -693,9 +712,7 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
             }
             emitFinished(state);
             publish(state);
-            if (listener != null) {
-                listener.accept(RunStreamChunk.statusChanged(state.status));
-            }
+            safeEmit(listener, RunStreamChunk.statusChanged(state.status));
         }
         return result(state);
     }
@@ -749,9 +766,7 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
                         state.waitingSince = Instant.now();
                         state.lastAccessedAt = Instant.now();
                         event(state, RunEvent.Type.WAITING_INPUT, Map.of("callId", call.callId()));
-                        if (listener != null) {
-                            listener.accept(RunStreamChunk.waitingInput(question, options));
-                        }
+                        safeEmit(listener, RunStreamChunk.waitingInput(question, options));
                     }
                     return;
                 }
@@ -810,7 +825,7 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
                                         "status", s.status().name(),
                                         "evidenceRefs", s.evidenceRefs()
                                 )).toList();
-                                listener.accept(RunStreamChunk.planUpdated(state.taskPlan.planRevision(), state.taskPlan.goalVersion(), reason, stepsData));
+                                safeEmit(listener, RunStreamChunk.planUpdated(state.taskPlan.planRevision(), state.taskPlan.goalVersion(), reason, stepsData));
                             }
                             outcome = new ToolOutcome.Success(ToolJson.write(Map.of(
                                     "ok", true,
@@ -847,9 +862,7 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
                                 "tool", call.name(),
                                 "argumentsSha256", digest(call.argumentsJson())
                         ));
-                        if (listener != null) {
-                            listener.accept(RunStreamChunk.waitingApproval(req));
-                        }
+                        safeEmit(listener, RunStreamChunk.waitingApproval(req));
                     }
                     return;
                 }
@@ -857,9 +870,7 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
             if (outcome == null) {
                 event(state, RunEvent.Type.TOOL_STARTED, Map.of("callId", call.callId(), "tool", call.name(),
                         "argumentsSha256", digest(call.argumentsJson())));
-                if (listener != null) {
-                    listener.accept(RunStreamChunk.toolStarted(call.callId(), call.name(), Map.of("callId", call.callId())));
-                }
+                safeEmit(listener, RunStreamChunk.toolStarted(call.callId(), call.name(), Map.of("callId", call.callId())));
                 ToolContext context = new ToolContext(state.id, state.request.workspace(),
                         Instant.now().plus(remaining(state)), state::isCancellationRequested,
                         artifact -> state.artifacts.add(artifact), state.resources);
@@ -902,9 +913,7 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
         String outcomeCode = outcome instanceof ToolOutcome.Failure failure ? failure.code() : "SUCCESS";
         event(state, RunEvent.Type.TOOL_FINISHED, Map.of("callId", call.callId(), "tool", call.name(),
                 "outcome", outcomeCode));
-        if (listener != null) {
-            listener.accept(RunStreamChunk.toolFinished(call.callId(), call.name(), outcomeCode));
-        }
+        safeEmit(listener, RunStreamChunk.toolFinished(call.callId(), call.name(), outcomeCode));
     }
 
     private void complete(State state, String answer, Consumer<RunStreamChunk> listener) throws IOException {
@@ -941,9 +950,7 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
                 state.message = answer;
                 state.reason = "CLARIFICATION_SUB_DIALOGUE";
                 event(state, RunEvent.Type.WAITING_INPUT, Map.of("subDialogue", true, "turn", state.clarificationSubDialogueTurns));
-                if (listener != null) {
-                    listener.accept(RunStreamChunk.waitingInput(answer, options));
-                }
+                safeEmit(listener, RunStreamChunk.waitingInput(answer, options));
             }
             return;
         }

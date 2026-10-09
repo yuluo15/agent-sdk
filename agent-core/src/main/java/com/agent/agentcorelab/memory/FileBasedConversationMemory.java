@@ -5,6 +5,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
@@ -21,21 +22,37 @@ import java.util.Optional;
  */
 public final class FileBasedConversationMemory implements ConversationMemory {
 
+    private static final System.Logger LOGGER = System.getLogger(FileBasedConversationMemory.class.getName());
+
     private final Path storageDir;
     private final InMemoryConversationMemory memoryCache;
+    private final boolean failOnError;
 
     public FileBasedConversationMemory(Path storageDir) {
-        this(storageDir, new InMemoryConversationMemory());
+        this(storageDir, new InMemoryConversationMemory(), false);
+    }
+
+    public FileBasedConversationMemory(Path storageDir, boolean failOnError) {
+        this(storageDir, new InMemoryConversationMemory(), failOnError);
     }
 
     public FileBasedConversationMemory(Path storageDir, InMemoryConversationMemory memoryCache) {
+        this(storageDir, memoryCache, false);
+    }
+
+    public FileBasedConversationMemory(Path storageDir, InMemoryConversationMemory memoryCache, boolean failOnError) {
         this.storageDir = Objects.requireNonNull(storageDir, "storageDir cannot be null");
         this.memoryCache = Objects.requireNonNull(memoryCache, "memoryCache cannot be null");
+        this.failOnError = failOnError;
         try {
             Files.createDirectories(storageDir);
         } catch (IOException e) {
             throw new IllegalStateException("Failed to initialize conversation memory storage directory: " + storageDir, e);
         }
+    }
+
+    public boolean isFailOnError() {
+        return failOnError;
     }
 
     public Path storageDir() {
@@ -76,7 +93,12 @@ public final class FileBasedConversationMemory implements ConversationMemory {
             Path file = resolveFile(conversationId);
             try {
                 Files.deleteIfExists(file);
-            } catch (IOException ignored) {}
+            } catch (IOException e) {
+                LOGGER.log(System.Logger.Level.WARNING, "Failed to delete conversation memory file {0}: {1}", file, e.getMessage(), e);
+                if (failOnError) {
+                    throw new UncheckedIOException("Failed to delete conversation memory file: " + file, e);
+                }
+            }
         }
     }
 
@@ -123,8 +145,11 @@ public final class FileBasedConversationMemory implements ConversationMemory {
                         memoryCache.append(conversationId, new ChatMessage(role, content, ts));
                     }
                 }
-            } catch (Exception ignored) {
-                // Corrupted or unreadable file is gracefully ignored
+            } catch (Exception e) {
+                LOGGER.log(System.Logger.Level.WARNING, "Failed to load conversation memory from file {0}: {1}", file, e.getMessage(), e);
+                if (failOnError) {
+                    throw new IllegalStateException("Failed to load conversation memory from file: " + file, e);
+                }
             }
         }
     }
@@ -135,7 +160,12 @@ public final class FileBasedConversationMemory implements ConversationMemory {
         if (history.isEmpty()) {
             try {
                 Files.deleteIfExists(file);
-            } catch (IOException ignored) {}
+            } catch (IOException e) {
+                LOGGER.log(System.Logger.Level.WARNING, "Failed to delete empty conversation memory file {0}: {1}", file, e.getMessage(), e);
+                if (failOnError) {
+                    throw new UncheckedIOException("Failed to delete empty conversation memory file: " + file, e);
+                }
+            }
             return;
         }
 
@@ -149,8 +179,11 @@ public final class FileBasedConversationMemory implements ConversationMemory {
             Path tempFile = file.resolveSibling(file.getFileName().toString() + ".tmp");
             Files.writeString(tempFile, json, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
             Files.move(tempFile, file, java.nio.file.StandardCopyOption.REPLACE_EXISTING, java.nio.file.StandardCopyOption.ATOMIC_MOVE);
-        } catch (IOException ignored) {
-            // Non-fatal disk write error
+        } catch (IOException e) {
+            LOGGER.log(System.Logger.Level.WARNING, "Failed to flush conversation history to disk for conversationId {0}: {1}", conversationId, e.getMessage(), e);
+            if (failOnError) {
+                throw new UncheckedIOException("Failed to flush conversation memory to disk: " + file, e);
+            }
         }
     }
 
