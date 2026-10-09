@@ -271,6 +271,14 @@ public final class SpringAiModelGateway implements ModelGateway {
             messages.add(new UserMessage("Runtime completion-check feedback:\n" + Objects.requireNonNull(feedback)));
         }
 
+        /**
+         * Dispatches the model response to the chunk listener.
+         * <p>
+         * Note: In the current Spring AI adapter implementation, the full response is obtained synchronously
+         * before emitting the complete text content to {@code chunkListener}. It does not perform incremental
+         * token-by-token streaming.
+         * </p>
+         */
         @Override
         public ModelResponse nextResponse(Duration timeout, Consumer<ModelStreamChunk> chunkListener) {
             ModelResponse response = nextResponse(timeout);

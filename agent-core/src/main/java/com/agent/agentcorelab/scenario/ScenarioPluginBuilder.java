@@ -67,6 +67,18 @@ public final class ScenarioPluginBuilder {
         return this;
     }
 
+    /**
+     * Sets the completion check for the scenario.
+     * <p>
+     * <b>Important Notice:</b> The builder defaults to {@code (run, answer) -> CompletionCheck.Result.satisfied()}
+     * for rapid prototyping and testing convenience. However, this default does <b>not</b> perform any verification
+     * on observations or deliverables. In production environments, applications should explicitly configure a meaningful
+     * {@link CompletionCheck} that inspects actual observations, artifacts, and receipts to prevent hallucinated completion.
+     * </p>
+     *
+     * @param completionCheck the completion check implementation to enforce, must not be null
+     * @return this builder instance
+     */
     public ScenarioPluginBuilder completionCheck(CompletionCheck completionCheck) {
         this.completionCheck = Objects.requireNonNull(completionCheck, "completionCheck cannot be null");
         return this;
