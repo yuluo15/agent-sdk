@@ -127,6 +127,9 @@ class DefaultAgentRunnerTests {
         assertEquals(waiting.snapshot().runId(), result.snapshot().runId());
         assertEquals(RunStatus.COMPLETED, result.snapshot().status());
         assertEquals(Duration.ofSeconds(5), result.snapshot().metrics().activeTime());
+        assertEquals(Duration.ofSeconds(5), result.snapshot().metrics().modelTime());
+        assertEquals(Duration.ZERO, result.snapshot().metrics().toolTime());
+        assertEquals(Duration.ofDays(1), result.snapshot().metrics().waitingTime());
         assertEquals(2, result.snapshot().metrics().modelRequests());
         assertEquals(1, result.snapshot().metrics().toolCalls());
         assertEquals("question", session.results.getFirst().callId());
@@ -463,6 +466,103 @@ class DefaultAgentRunnerTests {
         assertEquals(RunStatus.FAILED, result.snapshot().status());
         assertEquals("STORAGE_FAILED", result.stopReason());
         assertTrue(session.closed);
+    }
+
+    @Test
+    void segmentedTimingMetricsAccuratelyTrackModelToolAndApprovalWaitingTime() {
+        Tool normalTool = new Tool() {
+            @Override
+            public ToolDefinition definition() {
+                return new ToolDefinition("count", "Normal timed tool", "{\"type\":\"object\"}");
+            }
+
+            @Override
+            public ToolOutcome execute(String argumentsJson, ToolContext context) {
+                time.addAndGet(Duration.ofSeconds(4).toNanos());
+                return new ToolOutcome.Success("{\"ok\":true}");
+            }
+        };
+        Tool highRiskTool = new Tool() {
+            @Override
+            public ToolDefinition definition() {
+                return new ToolDefinition("danger", "High risk timed tool", "{\"type\":\"object\"}", com.agent.agentcorelab.tool.RiskLevel.HIGH_RISK);
+            }
+
+            @Override
+            public ToolOutcome execute(String argumentsJson, ToolContext context) {
+                time.addAndGet(Duration.ofSeconds(6).toNanos());
+                return new ToolOutcome.Success("{\"ok\":true}");
+            }
+        };
+        runner = new DefaultAgentRunner(gateway(), new ToolCatalog(List.of(normalTool, highRiskTool, new ClarificationTool())), events::add, time::get);
+
+        session.steps.add(() -> {
+            time.addAndGet(Duration.ofSeconds(2).toNanos());
+            return calls(new ToolCall("c1", "count", "{}"), new ToolCall("c2", "danger", "{}"));
+        });
+        session.steps.add(() -> {
+            time.addAndGet(Duration.ofSeconds(3).toNanos());
+            return text("all done");
+        });
+
+        AgentSpec spec = new AgentSpec("test-agent", "Instructions", Set.of("count", "danger", ClarificationTool.NAME), limits, completion);
+        RunResult waiting = runner.run(spec, new RunRequest("Execute pipeline", workspace));
+        assertEquals(RunStatus.WAITING_APPROVAL, waiting.snapshot().status());
+        assertEquals(Duration.ofSeconds(6), waiting.snapshot().metrics().activeTime());
+        assertEquals(Duration.ofSeconds(2), waiting.snapshot().metrics().modelTime());
+        assertEquals(Duration.ofSeconds(4), waiting.snapshot().metrics().toolTime());
+        assertEquals(Duration.ZERO, waiting.snapshot().metrics().waitingTime());
+
+        time.addAndGet(Duration.ofSeconds(10).toNanos());
+        String approvalId = waiting.snapshot().pendingApproval().orElseThrow().approvalId();
+        RunResult completed = runner.approve(waiting.snapshot().runId(), approvalId);
+
+        assertEquals(RunStatus.COMPLETED, completed.snapshot().status());
+        RunMetrics metrics = completed.snapshot().metrics();
+        assertEquals(Duration.ofSeconds(15), metrics.activeTime());
+        assertEquals(Duration.ofSeconds(5), metrics.modelTime());
+        assertEquals(Duration.ofSeconds(10), metrics.toolTime());
+        assertEquals(Duration.ofSeconds(10), metrics.waitingTime());
+
+        RunEvent finalEvent = events.stream().filter(e -> e.type() == RunEvent.Type.RUN_FINISHED).findFirst().orElseThrow();
+        assertTrue(finalEvent.summary().contains("\"activeMillis\":15000"));
+        assertTrue(finalEvent.summary().contains("\"modelMillis\":5000"));
+        assertTrue(finalEvent.summary().contains("\"toolMillis\":10000"));
+        assertTrue(finalEvent.summary().contains("\"waitingMillis\":10000"));
+    }
+
+    @Test
+    void reviseGoalDuringPendingHighRiskBatchSkipsRemainingToolsAndRecordsWaitingTime() {
+        Tool normalTool = tool("count", false);
+        Tool highRiskTool = new Tool() {
+            @Override
+            public ToolDefinition definition() {
+                return new ToolDefinition("danger", "High risk tool", "{\"type\":\"object\"}", com.agent.agentcorelab.tool.RiskLevel.HIGH_RISK);
+            }
+
+            @Override
+            public ToolOutcome execute(String argumentsJson, ToolContext context) {
+                return new ToolOutcome.Success("{\"ok\":true}");
+            }
+        };
+        runner = new DefaultAgentRunner(gateway(), new ToolCatalog(List.of(normalTool, highRiskTool, new ClarificationTool())), events::add, time::get);
+
+        session.steps.add(() -> calls(new ToolCall("c1", "danger", "{}"), new ToolCall("c2", "count", "{}")));
+        session.steps.add(() -> text("completed revised goal"));
+
+        AgentSpec spec = new AgentSpec("test-agent", "Instructions", Set.of("count", "danger", ClarificationTool.NAME), limits, completion);
+        RunResult waiting = runner.run(spec, new RunRequest("Initial risky goal", workspace));
+        assertEquals(RunStatus.WAITING_APPROVAL, waiting.snapshot().status());
+
+        time.addAndGet(Duration.ofSeconds(7).toNanos());
+        TaskBrief revised = new TaskBrief(2, "Safe alternative goal", java.util.Map.of(), List.of(), List.of());
+        RunResult completed = runner.reviseGoal(waiting.snapshot().runId(), revised);
+
+        assertEquals(RunStatus.COMPLETED, completed.snapshot().status());
+        assertEquals(Duration.ofSeconds(7), completed.snapshot().metrics().waitingTime());
+        assertEquals(2, session.results.size());
+        assertEquals("APPROVAL_SUPERSEDED", ((ToolOutcome.Failure) session.results.get(0).outcome()).code());
+        assertEquals("ACTION_SKIPPED", ((ToolOutcome.Failure) session.results.get(1).outcome()).code());
     }
 
     private RunResult run() {
