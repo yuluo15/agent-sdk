@@ -148,13 +148,29 @@ public final class SpringAiModelGateway implements ModelGateway {
 
         @Override
         public ModelResponse nextResponse(Duration timeout) {
+            return nextResponse(timeout, null);
+        }
+
+        /**
+         * Retrieves the next model response and dispatches chunks to {@code chunkListener}.
+         * <p>
+         * When {@code chunkListener} is non-null, requests SSE streaming ({@code "stream": true}) and emits
+         * incremental {@link ModelStreamChunk.Type#THINKING} and {@link ModelStreamChunk.Type#TEXT} chunks
+         * in real time as SSE events arrive over the bounded {@link OneShotHttpClient} transport, while
+         * reassembling and validating the complete protocol message for {@link OpenAiChatModel}. If the
+         * upstream endpoint responds with a non-SSE {@code application/json} body, falls back to emitting
+         * the complete reasoning/text chunk after response validation.
+         * </p>
+         */
+        @Override
+        public ModelResponse nextResponse(Duration timeout, Consumer<ModelStreamChunk> chunkListener) {
             requireReady();
             Objects.requireNonNull(timeout, "timeout");
             // OkHttp millisecond timers must never round a positive value down to zero.
             if (timeout.compareTo(Duration.ofMillis(1)) < 0 || timeout.toMillis() > Integer.MAX_VALUE) {
                 throw new IllegalArgumentException("Model timeout must be between 1 ms and Integer.MAX_VALUE ms");
             }
-            try (var http = transport.withTimeout(timeout)) {
+            try (var http = transport.withTimeout(timeout, chunkListener)) {
                 var clientOptions = ClientOptions.builder().httpClient(http).apiKey(apiKey)
                         .baseUrl(baseUrl).maxRetries(0).timeout(timeout).logLevel(com.openai.core.LogLevel.OFF).build();
                 var options = OpenAiChatOptions.builder().model(model).maxCompletionTokens(maxOutputTokens)
@@ -164,7 +180,19 @@ public final class SpringAiModelGateway implements ModelGateway {
                         .openAiClientAsync(new OpenAIClientAsyncImpl(clientOptions))
                         .options(options).build();
                 // No ChatClient, advisor, memory, retry template or ToolCallingManager execution.
-                return accept(chatModel.call(new Prompt(List.copyOf(messages), options)));
+                ModelResponse response = accept(chatModel.call(new Prompt(List.copyOf(messages), options)));
+                if (chunkListener != null && !http.streamed()) {
+                    if (!messages.isEmpty() && messages.getLast() instanceof AssistantMessage assistant) {
+                        Object reasoning = assistant.getMetadata().get("reasoningContent");
+                        if (reasoning instanceof String r && !r.isEmpty()) {
+                            chunkListener.accept(ModelStreamChunk.thinking(r));
+                        }
+                    }
+                    if (response != null && response.text() != null && !response.text().isEmpty()) {
+                        chunkListener.accept(ModelStreamChunk.text(response.text()));
+                    }
+                }
+                return response;
             } catch (RuntimeException ex) {
                 failed = true;
                 for (Throwable cause = ex; cause != null; cause = cause.getCause()) {
@@ -269,23 +297,6 @@ public final class SpringAiModelGateway implements ModelGateway {
         public void appendRuntimeFeedback(String feedback) {
             requireReady();
             messages.add(new UserMessage("Runtime completion-check feedback:\n" + Objects.requireNonNull(feedback)));
-        }
-
-        /**
-         * Dispatches the model response to the chunk listener.
-         * <p>
-         * Note: In the current Spring AI adapter implementation, the full response is obtained synchronously
-         * before emitting the complete text content to {@code chunkListener}. It does not perform incremental
-         * token-by-token streaming.
-         * </p>
-         */
-        @Override
-        public ModelResponse nextResponse(Duration timeout, Consumer<ModelStreamChunk> chunkListener) {
-            ModelResponse response = nextResponse(timeout);
-            if (chunkListener != null && response != null && response.text() != null && !response.text().isEmpty()) {
-                chunkListener.accept(ModelStreamChunk.text(response.text()));
-            }
-            return response;
         }
 
         @Override

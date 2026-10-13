@@ -705,15 +705,18 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
                     long modelStart = nanoTime.getAsLong();
                     try {
                         try {
-                            response = state.session.nextResponse(min(limits.modelTimeout(), remaining(state)), chunk -> {
-                                if (chunk != null && chunk.text() != null) {
-                                    if (chunk.type() == ModelStreamChunk.Type.THINKING) {
-                                        safeEmit(listener, RunStreamChunk.thinking(chunk.text()));
-                                    } else {
-                                        safeEmit(listener, RunStreamChunk.text(chunk.text()));
-                                    }
-                                }
-                            });
+                            Duration callTimeout = min(limits.modelTimeout(), remaining(state));
+                            response = listener == null
+                                    ? state.session.nextResponse(callTimeout)
+                                    : state.session.nextResponse(callTimeout, chunk -> {
+                                        if (chunk != null && chunk.text() != null) {
+                                            if (chunk.type() == ModelStreamChunk.Type.THINKING) {
+                                                safeEmit(listener, RunStreamChunk.thinking(chunk.text()));
+                                            } else {
+                                                safeEmit(listener, RunStreamChunk.text(chunk.text()));
+                                            }
+                                        }
+                                    });
                         } finally {
                             state.modelNanos += Math.max(0L, nanoTime.getAsLong() - modelStart);
                         }

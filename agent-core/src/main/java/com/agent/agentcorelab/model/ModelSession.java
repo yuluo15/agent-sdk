@@ -18,11 +18,13 @@ public interface ModelSession extends AutoCloseable {
     /**
      * Retrieves the next response from the model provider, optionally dispatching chunks to a listener.
      * <p>
-     * <b>Important Notice on Streaming Semantics:</b> The default implementation (and the built-in
-     * {@code SpringAiModelGateway}) executes {@link #nextResponse(Duration)} synchronously to gather the
-     * full response, and then emits the entire text as a single chunk to {@code chunkListener}. It does
-     * <b>not</b> currently emit incremental token-by-token chunks during generation. Adapters requiring
-     * true token-level streaming should override this method.
+     * <b>Streaming Semantics:</b> Built-in adapters such as {@code SpringAiModelGateway} request
+     * SSE streaming ({@code "stream": true}) when {@code chunkListener} is non-null and emit
+     * incremental {@link ModelStreamChunk.Type#THINKING} and {@link ModelStreamChunk.Type#TEXT} chunks
+     * in real time as SSE events arrive, with automatic fallback to single-chunk emission if the
+     * upstream server returns a non-SSE {@code application/json} response. The default interface method
+     * below provides a fallback for custom {@link ModelSession} implementations that only implement
+     * {@link #nextResponse(Duration)}.
      * </p>
      *
      * @param timeout maximum duration to wait for the model response

@@ -907,4 +907,104 @@ class SpringAiModelGatewayTests {
             assertTrue(tokensAfter < tokensBefore, "Tokens should decrease after compacting large earlier tool response");
         }
     }
+
+    @Test
+    void realTimeSseStreamingDispatchesThinkingAndTextChunksInFlightBeforeStreamCompletes() throws Exception {
+        CountDownLatch chunk1Received = new CountDownLatch(1);
+        CountDownLatch chunk2Received = new CountDownLatch(1);
+
+        server.createContext("/v1/sse/chat/completions", exchange -> {
+            requestCount.incrementAndGet();
+            try (exchange) {
+                JsonNode req = JSON.readTree(exchange.getRequestBody().readAllBytes());
+                requests.add(req);
+                exchange.getResponseHeaders().set("Content-Type", "text/event-stream; charset=utf-8");
+                exchange.sendResponseHeaders(200, 0);
+                var out = exchange.getResponseBody();
+
+                out.write(("data: {\"id\":\"sse-1\",\"model\":\"local-tool-model\",\"created\":1,"
+                        + "\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"reasoning_content\":\"先分析问题\"}}]}\n\n")
+                        .getBytes(StandardCharsets.UTF_8));
+                out.flush();
+                assertTrue(chunk1Received.await(3, TimeUnit.SECONDS), "First SSE chunk must be delivered in-flight before second chunk is sent");
+
+                out.write(("data: {\"id\":\"sse-1\",\"model\":\"local-tool-model\",\"created\":1,"
+                        + "\"choices\":[{\"index\":0,\"delta\":{\"content\":\"结论A\"}}]}\n\n")
+                        .getBytes(StandardCharsets.UTF_8));
+                out.flush();
+                assertTrue(chunk2Received.await(3, TimeUnit.SECONDS), "Second SSE chunk must be delivered in-flight before final chunk is sent");
+
+                out.write(("data: {\"id\":\"sse-1\",\"model\":\"local-tool-model\",\"created\":1,"
+                        + "\"choices\":[{\"index\":0,\"delta\":{\"content\":\"与结论B\"},\"finish_reason\":\"stop\"}]}\n\n"
+                        + "data: {\"id\":\"sse-1\",\"model\":\"local-tool-model\",\"created\":1,\"choices\":[],"
+                        + "\"usage\":{\"prompt_tokens\":30,\"completion_tokens\":12,\"total_tokens\":42}}\n\n"
+                        + "data: [DONE]\n\n")
+                        .getBytes(StandardCharsets.UTF_8));
+                out.flush();
+            } catch (InterruptedException ex) {
+                Thread.currentThread().interrupt();
+            }
+        });
+
+        var gateway = new SpringAiModelGateway("local-test-key", root + "/sse", "local-tool-model", 123);
+        try (var session = (SpringAiModelGateway.Session) gateway.openSession("规则", "目标", List.of(DEFINITION))) {
+            List<ModelStreamChunk> chunks = new ArrayList<>();
+            ModelResponse response = session.nextResponse(TIMEOUT, chunk -> {
+                chunks.add(chunk);
+                if (chunks.size() == 1) {
+                    chunk1Received.countDown();
+                } else if (chunks.size() == 2) {
+                    chunk2Received.countDown();
+                }
+            });
+
+            assertTrue(requests.remove().path("stream").asBoolean(), "Streaming call must set stream=true in request payload");
+            assertEquals(List.of(
+                    ModelStreamChunk.thinking("先分析问题"),
+                    ModelStreamChunk.text("结论A"),
+                    ModelStreamChunk.text("与结论B")
+            ), chunks);
+            assertEquals("结论A与结论B", response.text());
+            assertEquals(ModelResponse.FinishReason.STOP, response.finishReason());
+            assertEquals(new ModelResponse.TokenUsage(30, 12), response.usage().orElseThrow());
+            AssistantMessage nativeAssistant = (AssistantMessage) session.nativeMessages().get(2);
+            assertEquals("先分析问题", nativeAssistant.getMetadata().get("reasoningContent"));
+        }
+    }
+
+    @Test
+    void sseStreamingReassemblesFragmentedToolCallsAndPreservesThoughtSignatures() throws Exception {
+        server.createContext("/v1/sse-tools/chat/completions", exchange -> {
+            requestCount.incrementAndGet();
+            try (exchange) {
+                exchange.getRequestBody().readAllBytes();
+                exchange.getResponseHeaders().set("Content-Type", "text/event-stream");
+                exchange.sendResponseHeaders(200, 0);
+                var out = exchange.getResponseBody();
+                out.write(("data: {\"id\":\"sse-tool-1\",\"model\":\"local-tool-model\",\"created\":1,"
+                        + "\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"准备调用工具\","
+                        + "\"tool_calls\":[{\"index\":0,\"id\":\"call-sse-1\",\"type\":\"function\","
+                        + "\"function\":{\"name\":\"count\",\"arguments\":\"{\\\"城\"},"
+                        + "\"extra_content\":{\"google\":{\"thought_signature\":\"签名-sse\"}}}]}}]}\n\n"
+                        + "data: {\"id\":\"sse-tool-1\",\"model\":\"local-tool-model\",\"created\":1,"
+                        + "\"choices\":[{\"index\":0,\"delta\":{"
+                        + "\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"市\\\":\\\"上海\\\"}\"}}]},"
+                        + "\"finish_reason\":\"tool_calls\"}]}\n\n"
+                        + "data: [DONE]\n\n").getBytes(StandardCharsets.UTF_8));
+                out.flush();
+            }
+        });
+
+        var gateway = new SpringAiModelGateway("local-test-key", root + "/sse-tools", "local-tool-model", 123);
+        try (var session = (SpringAiModelGateway.Session) gateway.openSession("规则", "目标", List.of(DEFINITION))) {
+            List<ModelStreamChunk> chunks = new ArrayList<>();
+            ModelResponse response = session.nextResponse(TIMEOUT, chunks::add);
+            assertEquals(List.of(ModelStreamChunk.text("准备调用工具")), chunks);
+            assertEquals(ModelResponse.FinishReason.TOOL_CALLS, response.finishReason());
+            assertEquals(1, response.toolCalls().size());
+            assertEquals("call-sse-1", response.toolCalls().getFirst().callId());
+            assertEquals("count", response.toolCalls().getFirst().name());
+            assertEquals("{\"城市\":\"上海\"}", response.toolCalls().getFirst().argumentsJson());
+        }
+    }
 }
