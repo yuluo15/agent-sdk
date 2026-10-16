@@ -1185,6 +1185,9 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
         details.put("waitingMillis", metrics.waitingTime().toMillis());
         details.put("usage", metrics.tokenUsage().<Object>map(usage -> Map.of(
                 "inputTokens", usage.inputTokens(), "outputTokens", usage.outputTokens())).orElse("unknown"));
+        if (state.spec != null && !details.containsKey("agentId")) {
+            details.put("agentId", state.spec.id());
+        }
         events.publish(new RunEvent(++state.sequence, state.id, Instant.now(), type, ToolJson.write(details)));
     }
 

@@ -7,10 +7,13 @@ import com.agent.agentcorelab.model.ModelGateway;
 import com.agent.agentcorelab.scenario.ScenarioPlugin;
 import com.agent.agentcorelab.scenario.ScenarioRegistry;
 import com.agent.agentcorelab.tool.ToolCatalog;
+import com.agent.agentcorelab.trace.CompositeRunEventSink;
 import com.agent.agentcorelab.trace.JsonlRunEventSink;
+import com.agent.agentcorelab.trace.RunEventListener;
 import com.agent.agentcorelab.trace.RunEventSink;
 import com.agent.agentcorelab.memory.ConversationMemory;
 import com.agent.agentcorelab.memory.InMemoryConversationMemory;
+import java.util.List;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
@@ -36,8 +39,13 @@ public class AgentConfiguration {
 
     @Bean
     @ConditionalOnMissingBean(RunEventSink.class)
-    public RunEventSink runEventSink(AgentProperties properties) {
-        return new JsonlRunEventSink(properties.workspace().traceRoot());
+    public RunEventSink runEventSink(AgentProperties properties, ObjectProvider<RunEventListener> listenersProvider) {
+        JsonlRunEventSink jsonl = new JsonlRunEventSink(properties.workspace().traceRoot());
+        List<RunEventListener> listeners = listenersProvider.orderedStream().toList();
+        if (listeners.isEmpty()) {
+            return jsonl;
+        }
+        return new CompositeRunEventSink(jsonl, listeners);
     }
 
     @Bean
@@ -68,12 +76,19 @@ public class AgentConfiguration {
     @ConditionalOnBean(ModelGateway.class)
     @ConditionalOnMissingBean(AgentRunnerFactory.class)
     public AgentRunnerFactory agentRunnerFactory(ModelGateway model, ToolCatalog tools, RunEventSink events,
+                                                 ObjectProvider<RunEventListener> listenersProvider,
                                                  ObjectProvider<ConversationMemory> memoryProvider,
                                                  ObjectProvider<com.agent.agentcorelab.memory.UserProfileMemory> userProfileProvider) {
         ConversationMemory memory = memoryProvider.getIfAvailable(InMemoryConversationMemory::new);
         com.agent.agentcorelab.memory.UserProfileMemory profiles = userProfileProvider.getIfAvailable(
                 com.agent.agentcorelab.memory.InMemoryUserProfileMemory::new);
-        return () -> new DefaultAgentRunner(model, tools, events, memory, profiles);
+        List<RunEventListener> listeners = listenersProvider.orderedStream().toList();
+        RunEventSink effectiveEvents = events;
+        if (!listeners.isEmpty() && !(events instanceof CompositeRunEventSink)) {
+            effectiveEvents = new CompositeRunEventSink(events, listeners);
+        }
+        RunEventSink finalEvents = effectiveEvents;
+        return () -> new DefaultAgentRunner(model, tools, finalEvents, memory, profiles);
     }
 
     @Bean
