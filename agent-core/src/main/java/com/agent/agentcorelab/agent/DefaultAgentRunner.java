@@ -964,8 +964,14 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
         state.errors = outcome instanceof ToolOutcome.Failure ? state.errors + 1 : 0;
         state.session.appendToolResult(call.callId(), outcome);
         String outcomeCode = outcome instanceof ToolOutcome.Failure failure ? failure.code() : "SUCCESS";
-        event(state, RunEvent.Type.TOOL_FINISHED, Map.of("callId", call.callId(), "tool", call.name(),
-                "outcome", outcomeCode));
+        Map<String, Object> toolPayload = new LinkedHashMap<>();
+        toolPayload.put("callId", call.callId());
+        toolPayload.put("tool", call.name());
+        toolPayload.put("outcome", outcomeCode);
+        if (outcome instanceof ToolOutcome.Failure failure && failure.message() != null) {
+            toolPayload.put("error", failure.message());
+        }
+        event(state, RunEvent.Type.TOOL_FINISHED, toolPayload);
         safeEmit(listener, RunStreamChunk.toolFinished(call.callId(), call.name(), outcomeCode));
     }
 
