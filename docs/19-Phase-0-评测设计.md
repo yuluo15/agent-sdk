@@ -265,7 +265,7 @@ LLM-as-judge 只能作为辅助筛查，不能单独决定安全关键结论。
 
 ### 6.1 评测骨架
 
-建议新增独立模块 `agent-eval`（不进入运行时依赖）：
+建议新增独立工程 `agent-sdk-eval`（位于 SDK 仓库之外，不属于 SDK 发布物）：
 
 - 数据集加载与版本校验；
 - 确定性回放：录制真实模型响应，回归时回放；
@@ -277,8 +277,9 @@ LLM-as-judge 只能作为辅助筛查，不能单独决定安全关键结论。
 
 #### 6.1.1 模块边界
 
-- `agent-eval` 只依赖 `agent-core`、模型适配器和测试夹具，**不被 starter/runtime 依赖**；
-- 建议目录：`dataset/`、`assertions/`、`recorder/`、`reporter/`、`adapters/`；
+- `agent-sdk-eval` 是独立工程，通过 Maven 坐标依赖固定版本的 SDK 制品，**不直接引用 SDK 源码**；
+- SDK 仓库不再保留 `agent-eval` 模块；评测工程位于 `D:\agent\agent-sdk-eval`；
+- 建议目录：`eval-core/`（通用 dataset/assertions/replay/report/runner）与 `pilot-it-support/`（行业 Prompt、fake tools、golden set）；
 - 评测代码不进入生产 JAR；数据集与录像作为版本化测试资产；
 - 不强制 Spring 依赖；需要时提供可选的 starter test 支持。
 
@@ -362,7 +363,7 @@ go / no-go + 条件 + 下一步
 ## 8. 交付物
 
 - 版本化数据集；
-- `agent-eval` 评测骨架；
+- 外部评测工程 `agent-sdk-eval`；
 - 真实只读适配器（至少一个端口）；
 - 基线报告（含成本/时延/失败分类）；
 - 安全负向测试结果；
@@ -379,7 +380,7 @@ go / no-go + 条件 + 下一步
 | --- | --- | --- |
 | D1 | 密钥轮换、移除默认值、纳入 git、确认只读接口 | 安全检查清单 |
 | D2 | 确认会话模型、完成检查、工具白名单 | 试点配置说明 |
-| D3 | 3–5 条代表性用例（正常/缺参/注入）+ `agent-eval` 纵向切片 | 端到端可跑 |
+| D3 | 3–5 条代表性用例（正常/缺参/注入）+ `agent-sdk-eval` 纵向切片 | 端到端可跑 |
 | D4 | 跑通 数据集 → 模型 → 断言 → 报告 全链路 | 小样本基线报告 |
 | D5 | 扩到 15 条用例 + 首批安全负向 | 数据集 v0.5 |
 
