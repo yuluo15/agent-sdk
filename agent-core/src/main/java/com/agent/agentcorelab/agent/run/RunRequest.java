@@ -1,5 +1,6 @@
-package com.agent.agentcorelab.agent;
+package com.agent.agentcorelab.agent.run;
 
+import com.agent.agentcorelab.agent.plan.TaskBrief;
 import com.agent.agentcorelab.workspace.Workspace;
 
 import java.util.Objects;

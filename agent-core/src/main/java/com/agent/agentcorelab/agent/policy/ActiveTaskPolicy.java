@@ -1,4 +1,7 @@
-package com.agent.agentcorelab.agent;
+package com.agent.agentcorelab.agent.policy;
+
+import com.agent.agentcorelab.agent.AgentRunner;
+import com.agent.agentcorelab.agent.run.RunStatus;
 
 /**
  * Defines the strategy for handling new task submissions when an {@link AgentRunner}

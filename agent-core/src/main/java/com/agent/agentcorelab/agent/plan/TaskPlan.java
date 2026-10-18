@@ -1,4 +1,4 @@
-package com.agent.agentcorelab.agent;
+package com.agent.agentcorelab.agent.plan;
 
 import java.util.HashSet;
 import java.util.List;

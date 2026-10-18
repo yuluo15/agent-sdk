@@ -2,11 +2,11 @@ package com.agent.agentcorelab.cli;
 
 import com.agent.agentcorelab.agent.AgentRunner;
 import com.agent.agentcorelab.agent.AgentSpec;
-import com.agent.agentcorelab.agent.RunLimits;
-import com.agent.agentcorelab.agent.RunRequest;
-import com.agent.agentcorelab.agent.RunResult;
-import com.agent.agentcorelab.agent.RunSnapshot;
-import com.agent.agentcorelab.agent.RunStatus;
+import com.agent.agentcorelab.agent.run.RunLimits;
+import com.agent.agentcorelab.agent.run.RunRequest;
+import com.agent.agentcorelab.agent.run.RunResult;
+import com.agent.agentcorelab.agent.run.RunSnapshot;
+import com.agent.agentcorelab.agent.run.RunStatus;
 import com.agent.agentcorelab.bootstrap.AgentProperties;
 import com.agent.agentcorelab.scenario.ScenarioRegistry;
 

@@ -1,7 +1,7 @@
 package com.agent.agentcorelab.scenario;
 
 import com.agent.agentcorelab.agent.AgentSpec;
-import com.agent.agentcorelab.agent.RunLimits;
+import com.agent.agentcorelab.agent.run.RunLimits;
 import com.agent.agentcorelab.tool.ClarificationTool;
 import com.agent.agentcorelab.tool.Tool;
 import com.agent.agentcorelab.tool.ToolCatalog;

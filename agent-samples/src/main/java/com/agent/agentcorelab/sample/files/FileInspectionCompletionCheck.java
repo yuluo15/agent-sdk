@@ -1,7 +1,7 @@
 package com.agent.agentcorelab.sample.files;
 
 import com.agent.agentcorelab.agent.CompletionCheck;
-import com.agent.agentcorelab.agent.RunSnapshot;
+import com.agent.agentcorelab.agent.run.RunSnapshot;
 import com.agent.agentcorelab.tool.ToolOutcome;
 import com.agent.agentcorelab.workspace.WorkspaceJson;
 import com.fasterxml.jackson.databind.JsonNode;

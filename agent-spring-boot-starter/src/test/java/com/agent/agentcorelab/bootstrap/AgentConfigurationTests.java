@@ -3,7 +3,7 @@ package com.agent.agentcorelab.bootstrap;
 import com.agent.agentcorelab.agent.AgentRunner;
 import com.agent.agentcorelab.agent.CompletionCheck;
 import com.agent.agentcorelab.agent.DefaultAgentRunner;
-import com.agent.agentcorelab.agent.RunLimits;
+import com.agent.agentcorelab.agent.run.RunLimits;
 import com.agent.agentcorelab.model.ModelGateway;
 import com.agent.agentcorelab.model.SpringAiModelGateway;
 import com.agent.agentcorelab.scenario.ScenarioPlugin;

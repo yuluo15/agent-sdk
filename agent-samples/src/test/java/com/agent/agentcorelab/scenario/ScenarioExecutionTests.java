@@ -1,8 +1,8 @@
 package com.agent.agentcorelab.scenario;
 
 import com.agent.agentcorelab.agent.DefaultAgentRunner;
-import com.agent.agentcorelab.agent.RunRequest;
-import com.agent.agentcorelab.agent.RunStatus;
+import com.agent.agentcorelab.agent.run.RunRequest;
+import com.agent.agentcorelab.agent.run.RunStatus;
 import com.agent.agentcorelab.model.ModelGateway;
 import com.agent.agentcorelab.model.ModelResponse;
 import com.agent.agentcorelab.model.ModelSession;

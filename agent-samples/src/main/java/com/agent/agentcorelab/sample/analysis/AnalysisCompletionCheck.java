@@ -1,7 +1,7 @@
 package com.agent.agentcorelab.sample.analysis;
 
 import com.agent.agentcorelab.agent.CompletionCheck;
-import com.agent.agentcorelab.agent.RunSnapshot;
+import com.agent.agentcorelab.agent.run.RunSnapshot;
 import com.agent.agentcorelab.tool.ToolOutcome;
 import com.agent.agentcorelab.workspace.Artifact;
 import com.agent.agentcorelab.workspace.WorkspaceJson;

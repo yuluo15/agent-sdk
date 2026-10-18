@@ -1,6 +1,6 @@
 package com.agent.agentcorelab.bootstrap;
 
-import com.agent.agentcorelab.agent.RunLimits;
+import com.agent.agentcorelab.agent.run.RunLimits;
 import com.agent.agentcorelab.workspace.Workspace;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.boot.context.properties.bind.ConstructorBinding;

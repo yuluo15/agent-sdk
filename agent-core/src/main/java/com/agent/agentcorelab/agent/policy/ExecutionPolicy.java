@@ -1,4 +1,4 @@
-package com.agent.agentcorelab.agent;
+package com.agent.agentcorelab.agent.policy;
 
 import java.util.Objects;
 import java.util.Optional;

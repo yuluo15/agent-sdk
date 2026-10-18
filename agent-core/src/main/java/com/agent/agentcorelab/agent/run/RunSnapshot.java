@@ -1,5 +1,7 @@
-package com.agent.agentcorelab.agent;
+package com.agent.agentcorelab.agent.run;
 
+import com.agent.agentcorelab.agent.plan.TaskBrief;
+import com.agent.agentcorelab.agent.plan.TaskPlan;
 import com.agent.agentcorelab.tool.ToolCall;
 import com.agent.agentcorelab.tool.ToolOutcome;
 import com.agent.agentcorelab.workspace.Artifact;

@@ -1,6 +1,6 @@
 package com.agent.agentcorelab.tool;
 
-import com.agent.agentcorelab.agent.RunLimits;
+import com.agent.agentcorelab.agent.run.RunLimits;
 import com.agent.agentcorelab.scenario.ScenarioPlugin;
 import com.agent.agentcorelab.scenario.ScenarioRegistry;
 import com.agent.agentcorelab.tool.annotation.AgentTool;

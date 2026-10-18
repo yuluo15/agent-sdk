@@ -1,5 +1,7 @@
 package com.agent.agentcorelab.agent;
 
+import com.agent.agentcorelab.agent.run.RunSnapshot;
+
 import java.util.Objects;
 
 @FunctionalInterface

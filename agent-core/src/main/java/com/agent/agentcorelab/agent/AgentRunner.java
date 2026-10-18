@@ -1,5 +1,12 @@
 package com.agent.agentcorelab.agent;
 
+import com.agent.agentcorelab.agent.plan.TaskBrief;
+import com.agent.agentcorelab.agent.policy.ExecutionPolicy;
+import com.agent.agentcorelab.agent.run.RunRequest;
+import com.agent.agentcorelab.agent.run.RunResult;
+import com.agent.agentcorelab.agent.run.RunSnapshot;
+import com.agent.agentcorelab.agent.run.RunStreamChunk;
+
 import java.util.Optional;
 import java.util.UUID;
 import java.util.function.Consumer;

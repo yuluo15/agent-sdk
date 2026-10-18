@@ -1,7 +1,7 @@
 package com.agent.agentcorelab.cli;
 
 import com.agent.agentcorelab.agent.AgentRunner;
-import com.agent.agentcorelab.agent.RunLimits;
+import com.agent.agentcorelab.agent.run.RunLimits;
 import com.agent.agentcorelab.bootstrap.AgentProperties;
 import com.agent.agentcorelab.bootstrap.CliConfiguration;
 import com.agent.agentcorelab.scenario.ScenarioRegistry;

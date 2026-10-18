@@ -1,7 +1,7 @@
 package com.agent.agentcorelab.scenario;
 
 import com.agent.agentcorelab.agent.CompletionCheck;
-import com.agent.agentcorelab.agent.ExecutionPolicy;
+import com.agent.agentcorelab.agent.policy.ExecutionPolicy;
 import com.agent.agentcorelab.tool.Tool;
 
 import java.util.List;

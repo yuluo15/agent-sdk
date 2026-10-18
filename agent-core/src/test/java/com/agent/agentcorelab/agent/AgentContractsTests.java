@@ -1,5 +1,7 @@
 package com.agent.agentcorelab.agent;
 
+import com.agent.agentcorelab.agent.run.RunLimits;
+import com.agent.agentcorelab.agent.run.RunRequest;
 import com.agent.agentcorelab.workspace.Workspace;
 import org.junit.jupiter.api.Test;
 

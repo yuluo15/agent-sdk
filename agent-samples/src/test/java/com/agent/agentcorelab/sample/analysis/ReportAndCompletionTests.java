@@ -1,6 +1,6 @@
 package com.agent.agentcorelab.sample.analysis;
 
-import com.agent.agentcorelab.agent.RunSnapshot;
+import com.agent.agentcorelab.agent.run.RunSnapshot;
 import com.agent.agentcorelab.tool.ActiveTimeExceededException;
 import com.agent.agentcorelab.tool.ToolContext;
 import com.agent.agentcorelab.tool.ToolOutcome;

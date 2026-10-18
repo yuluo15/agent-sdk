@@ -1,7 +1,7 @@
 package com.agent.agentcorelab.sample.files;
 
-import com.agent.agentcorelab.agent.RunSnapshot;
-import com.agent.agentcorelab.agent.RunStatus;
+import com.agent.agentcorelab.agent.run.RunSnapshot;
+import com.agent.agentcorelab.agent.run.RunStatus;
 import com.agent.agentcorelab.sample.analysis.DataAnalysisScenario;
 import com.agent.agentcorelab.sample.analysis.SampleRun;
 import com.agent.agentcorelab.scenario.ScenarioPlugin;

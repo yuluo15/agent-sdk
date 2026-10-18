@@ -1,7 +1,8 @@
 package com.agent.agentcorelab.sample.analysis;
 
-import com.agent.agentcorelab.agent.RunSnapshot;
-import com.agent.agentcorelab.agent.RunStatus;
+import com.agent.agentcorelab.agent.run.RunMetrics;
+import com.agent.agentcorelab.agent.run.RunSnapshot;
+import com.agent.agentcorelab.agent.run.RunStatus;
 import com.agent.agentcorelab.tool.Tool;
 import com.agent.agentcorelab.tool.ToolCall;
 import com.agent.agentcorelab.tool.ToolContext;
@@ -118,7 +119,7 @@ public final class SampleRun implements AutoCloseable {
 
     public RunSnapshot snapshot() {
         return new RunSnapshot(runId, "data-analysis", "Compare configured fictional windows", RunStatus.RUNNING, observations, artifacts,
-                new com.agent.agentcorelab.agent.RunMetrics(0, observations.size(), java.time.Duration.ZERO, java.util.Optional.empty()),
+                new RunMetrics(0, observations.size(), java.time.Duration.ZERO, java.util.Optional.empty()),
                 java.util.Optional.empty());
     }
 
