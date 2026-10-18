@@ -20,6 +20,7 @@
         <module>agent-mcp-adapter</module>
         <module>agent-spring-boot-starter</module>
         <module>agent-samples</module>
+        <module>agent-eval</module>
     </modules>
     <properties>
         <java.version>21</java.version>
@@ -50,6 +51,11 @@
             <dependency>
                 <groupId>com.agent</groupId>
                 <artifactId>agent-spring-boot-starter</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.agent</groupId>
+                <artifactId>agent-eval</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>
