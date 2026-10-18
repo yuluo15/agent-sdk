@@ -16,7 +16,7 @@ import java.util.Optional;
 import static org.junit.jupiter.api.Assertions.*;
 
 @DisplayName("Enterprise SkillRegistry and SkillConsultantTool Tests")
-class SkillRegistryAndToolTest {
+class SkillRegistryAndToolTests {
 
     @Test
     @DisplayName("SkillDefinition builder and validation constraints")

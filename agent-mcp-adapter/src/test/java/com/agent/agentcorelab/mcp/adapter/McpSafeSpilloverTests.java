@@ -28,7 +28,7 @@ import java.util.UUID;
 import static org.junit.jupiter.api.Assertions.*;
 
 @DisplayName("McpSafeSpillover and WorkspaceSession Integration Tests")
-class McpSafeSpilloverTest {
+class McpSafeSpilloverTests {
 
     @Test
     @DisplayName("Large MCP tool output automatically spills over into WorkspaceSession storage")

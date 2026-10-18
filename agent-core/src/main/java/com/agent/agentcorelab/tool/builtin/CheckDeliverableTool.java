@@ -1,5 +1,10 @@
-package com.agent.agentcorelab.tool;
+package com.agent.agentcorelab.tool.builtin;
 
+import com.agent.agentcorelab.tool.Tool;
+import com.agent.agentcorelab.tool.ToolContext;
+import com.agent.agentcorelab.tool.ToolDefinition;
+import com.agent.agentcorelab.tool.ToolJson;
+import com.agent.agentcorelab.tool.ToolOutcome;
 import com.agent.agentcorelab.workspace.WorkspaceSession;
 import com.fasterxml.jackson.databind.JsonNode;
 

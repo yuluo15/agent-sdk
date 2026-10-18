@@ -2,11 +2,11 @@ package com.agent.agentcorelab.scenario;
 
 import com.agent.agentcorelab.agent.CompletionCheck;
 import com.agent.agentcorelab.agent.run.RunLimits;
-import com.agent.agentcorelab.tool.ClarificationTool;
 import com.agent.agentcorelab.tool.Tool;
 import com.agent.agentcorelab.tool.ToolContext;
 import com.agent.agentcorelab.tool.ToolDefinition;
 import com.agent.agentcorelab.tool.ToolOutcome;
+import com.agent.agentcorelab.tool.builtin.ClarificationTool;
 import org.junit.jupiter.api.Test;
 
 import java.time.Duration;

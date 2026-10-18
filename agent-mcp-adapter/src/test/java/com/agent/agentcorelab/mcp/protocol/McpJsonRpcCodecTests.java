@@ -9,7 +9,7 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.*;
 
 @DisplayName("McpJsonRpcCodec Specification Tests")
-class McpJsonRpcCodecTest {
+class McpJsonRpcCodecTests {
 
     @Test
     @DisplayName("Encode and decode standard JSON-RPC Request")

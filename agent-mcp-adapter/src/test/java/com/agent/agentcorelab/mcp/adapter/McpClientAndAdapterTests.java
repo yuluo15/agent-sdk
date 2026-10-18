@@ -26,7 +26,7 @@ import java.util.Set;
 import static org.junit.jupiter.api.Assertions.*;
 
 @DisplayName("McpClient, McpToolAdapter and McpServerBridge End-to-End Tests")
-class McpClientAndAdapterTest {
+class McpClientAndAdapterTests {
 
     private InMemoryMcpTransport transport;
     private McpClient client;

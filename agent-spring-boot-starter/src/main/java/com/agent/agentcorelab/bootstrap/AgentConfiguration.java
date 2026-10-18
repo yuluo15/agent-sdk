@@ -13,6 +13,8 @@ import com.agent.agentcorelab.trace.RunEventListener;
 import com.agent.agentcorelab.trace.RunEventSink;
 import com.agent.agentcorelab.memory.ConversationMemory;
 import com.agent.agentcorelab.memory.InMemoryConversationMemory;
+import com.agent.agentcorelab.memory.compaction.ConversationCompactor;
+import com.agent.agentcorelab.memory.compaction.RuleBasedConversationCompactor;
 import java.util.List;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
@@ -49,16 +51,16 @@ public class AgentConfiguration {
     }
 
     @Bean
-    @ConditionalOnMissingBean(com.agent.agentcorelab.memory.ConversationCompactor.class)
-    public com.agent.agentcorelab.memory.ConversationCompactor conversationCompactor() {
-        return new com.agent.agentcorelab.memory.RuleBasedConversationCompactor();
+    @ConditionalOnMissingBean(ConversationCompactor.class)
+    public ConversationCompactor conversationCompactor() {
+        return new RuleBasedConversationCompactor();
     }
 
     @Bean
     @ConditionalOnMissingBean(ConversationMemory.class)
-    public ConversationMemory conversationMemory(ObjectProvider<com.agent.agentcorelab.memory.ConversationCompactor> compactorProvider) {
-        com.agent.agentcorelab.memory.ConversationCompactor compactor = compactorProvider.getIfAvailable(
-                com.agent.agentcorelab.memory.RuleBasedConversationCompactor::new);
+    public ConversationMemory conversationMemory(ObjectProvider<ConversationCompactor> compactorProvider) {
+        ConversationCompactor compactor = compactorProvider.getIfAvailable(
+                RuleBasedConversationCompactor::new);
         return new InMemoryConversationMemory(
                 InMemoryConversationMemory.DEFAULT_MAX_CONVERSATIONS,
                 InMemoryConversationMemory.DEFAULT_MAX_MESSAGES_PER_CONVERSATION,

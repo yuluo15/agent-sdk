@@ -2,7 +2,7 @@ package com.agent.agentcorelab;
 
 import com.agent.agentcorelab.bootstrap.AgentProperties;
 import com.agent.agentcorelab.tool.ToolCatalog;
-import com.agent.agentcorelab.tool.ClarificationTool;
+import com.agent.agentcorelab.tool.builtin.ClarificationTool;
 import com.agent.agentcorelab.scenario.ScenarioRegistry;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;

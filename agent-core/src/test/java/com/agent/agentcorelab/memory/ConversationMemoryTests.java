@@ -1,5 +1,8 @@
 package com.agent.agentcorelab.memory;
 
+import com.agent.agentcorelab.memory.compaction.CompactionPolicy;
+import com.agent.agentcorelab.memory.compaction.ConversationCompactor;
+import com.agent.agentcorelab.memory.compaction.RuleBasedConversationCompactor;
 import com.agent.agentcorelab.agent.AgentConversation;
 import com.agent.agentcorelab.agent.AgentSpec;
 import com.agent.agentcorelab.agent.DefaultAgentRunner;

@@ -1,4 +1,6 @@
-package com.agent.agentcorelab.memory;
+package com.agent.agentcorelab.memory.compaction;
+
+import com.agent.agentcorelab.memory.ChatMessage;
 
 import java.util.ArrayList;
 import java.util.List;

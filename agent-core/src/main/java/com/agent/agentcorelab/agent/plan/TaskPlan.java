@@ -45,7 +45,7 @@ public record TaskPlan(
     }
 
     /**
-     * Validates an update attempt according to dosc/05 & dosc/06:
+     * Validates an update attempt according to docs/05 & docs/06:
      * - expectedRevision == current planRevision (CAS check)
      * - targetGoalVersion == current goalVersion
      * - steps size <= MAX_STEPS

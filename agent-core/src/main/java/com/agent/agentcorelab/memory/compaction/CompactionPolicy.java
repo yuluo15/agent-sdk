@@ -1,4 +1,4 @@
-package com.agent.agentcorelab.memory;
+package com.agent.agentcorelab.memory.compaction;
 
 /**
  * Configuration policy governing when and how dialogue turns are compacted.

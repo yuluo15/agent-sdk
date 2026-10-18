@@ -23,12 +23,12 @@ agent-sdk/
 ├── agent-mcp-adapter           # Model Context Protocol (MCP) 客户端、工具适配器与企业 Skills
 ├── agent-spring-boot-starter   # Spring Boot 自动装配、@AgentComponent 发现与 MCP 配置
 ├── agent-samples               # 现存集成与场景样例
-└── dosc/                       # 架构设计、使用场景手册与演进指南
+└── docs/                        # 架构设计、使用场景手册与演进指南
 ```
 
 ## 文档指引体系
 
-- **[使用场景手册 (dosc/使用场景手册.md)](dosc/使用场景手册.md)**（**官方推荐首读**）：定义 SDK 单 Agent 核心定位、能力矩阵、十类企业场景设计卡与边界。
-- **[演进建议 (dosc/演进建议.md)](dosc/演进建议.md)**（**官方技术路线**）：务实质量基线、P0~P3 演进节奏与设计红线。
+- **[使用场景手册 (docs/使用场景手册.md)](docs/使用场景手册.md)**（**官方推荐首读**）：定义 SDK 单 Agent 核心定位、能力矩阵、十类企业场景设计卡与边界。
+- **[演进建议 (docs/演进建议.md)](docs/演进建议.md)**（**官方技术路线**）：务实质量基线、P0~P3 演进节奏与设计红线。
 - **[使用手册 (使用手册.md)](使用手册.md)**：开发接入指南、配置清单、代码示例与 CLI 运行。
-- **[架构体系历史参考 (dosc/17-Agent-SDK架构体系与演进路线规划.md)](dosc/17-Agent-SDK架构体系与演进路线规划.md)**：早期演进全景参考（注：阶段 3.5 多 Agent Swarm 与 4.0 强一致持久化已按《演进建议》自核心剥离）。
+- **[架构体系历史参考 (docs/17-Agent-SDK架构体系与演进路线规划.md)](docs/17-Agent-SDK架构体系与演进路线规划.md)**：早期演进全景参考（注：阶段 3.5 多 Agent Swarm 与 4.0 强一致持久化已按《演进建议》自核心剥离）。

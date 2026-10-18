@@ -1,4 +1,9 @@
-package com.agent.agentcorelab.tool;
+package com.agent.agentcorelab.tool.builtin;
+
+import com.agent.agentcorelab.tool.Tool;
+import com.agent.agentcorelab.tool.ToolContext;
+import com.agent.agentcorelab.tool.ToolDefinition;
+import com.agent.agentcorelab.tool.ToolOutcome;
 
 public final class UpdatePlanTool implements Tool {
     public static final String NAME = "updatePlan";
