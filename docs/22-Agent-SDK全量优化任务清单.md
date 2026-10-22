@@ -16,9 +16,9 @@
 | **03** | **P0** | **模型瞬时抖动有限重试** | `DefaultAgentRunner.java:742`<br>`SpringAiModelGateway.java:175` | **✅ 已完成** | 只在未推流时针对 429/5xx/超时重试 1 次，严格消耗请求预算，记录 `MODEL_RETRY`。 |
 | **04** | **P0** | **状态机事件语义规范化与死代码清理** | `DefaultAgentRunner.java:704, 1034, 342` | **✅ 已完成** | 拆解被滥用的 `RUN_STARTED`，引入专用事件类型，删除无用私有方法 `estimateTokens`。 |
 | **05** | **P0** | **交付物验收精确匹配** | `DefaultAgentRunner.java:1070` | **✅ 已完成** | 废除子串包含（substring match），改为产物唯一 ID 或精确文件名强匹配与非空检查。 |
-| **06** | **P1** | **解耦 Starter 单例 Runner，提供会话管理器** | `AgentConfiguration.java:96`<br>`SessionRunnerManager.java` | **⏳ 待开始** | 废除全局单例 Runner，提供基于 LRU 与 `waitingTimeout` 闲置驱逐的轻量多会话管理器。 |
-| **07** | **P1** | **等待超时（waitingTimeout）配置化** | `AgentProperties.java`<br>`RunLimits.java` | **⏳ 待开始** | 在 application.yml 中开放挂起等待超时阈值，并在会话清理与状态超时检查中生效。 |
-| **08** | **P1** | **目标动态修订与取消机制安全加固** | `DefaultAgentRunner.java:1249, 1229` | **⏳ 待开始** | `reviseGoal` 强制校验版本单调递增并同步重建计划；`cancel` 改为非阻塞原子令牌中断。 |
+| **06** | **P1** | **解耦 Starter 单例 Runner，提供会话管理器** | `AgentConfiguration.java:101`<br>`SessionRunnerManager.java`<br>`DefaultSessionRunnerManager.java` | **✅ 已完成** | 废除全局单例 Runner 强制模式，提供基于 LRU 与 idleTimeout 闲置驱逐的轻量多会话管理器。 |
+| **07** | **P1** | **等待超时（waitingTimeout）配置化与全链路联动** | `AgentProperties.java`<br>`RunLimits.java`<br>`DefaultAgentRunner.java:274` | **✅ 已完成** | 在 application.yml 中开放挂起等待超时阈值，并在执行器超时检查中联动触发 RUN_TIMEOUT 事件与指标。 |
+| **08** | **P1** | **目标动态修订与取消机制安全加固** | `DefaultAgentRunner.java:563, 660`<br>`TaskPlan.java:37`<br>`OneShotHttpClient.java:525` | **✅ 已完成** | `reviseGoal` 强制校验版本单调递增并同步重建计划；`cancel` 改为非阻塞原子状态位与底层 OkHttp Call.cancel 协同即时中断。 |
 | **09** | **P2** | **MCP 协议升级与官方 Java SDK 替换** | `McpProtocolConstants.java:11`<br>`DefaultMcpClient.java` | **⏳ 待开始** | 引入官方 2.x SDK，支持 HTTP/SSE 远程传输与 OAuth，保留适配器与风险沙箱。 |
 | **10** | **P2** | **企业技能生态标准化（支持 SKILL.md）** | `SkillDefinition.java`<br>`SkillConsultantTool.java` | **⏳ 待开始** | 支持开源规范的 `SKILL.md`（Prompt/SOP 元数据与正文解析），保留按需咨询工具。 |
 | **11** | **P2** | **Spring 容器内 MCP 与 @AgentTool 自动发现合并** | `McpAutoConfiguration.java`<br>`AgentConfiguration.java` | **⏳ 待开始** | 自动将容器中的 MCP 适配工具与 `@AgentComponent` 本地工具聚合进统一 ToolCatalog。 |
@@ -139,47 +139,80 @@
 
 ### 任务 06：解耦 Starter 单例 Runner，提供标准轻量会话管理器
 
-* **状态**：`⏳ 待开始`
-* **涉及代码**：[`AgentConfiguration.java:96-101`](file:///D:/agent/agent-sdk/agent-spring-boot-starter/src/main/java/com/agent/agentcorelab/bootstrap/AgentConfiguration.java#L96-L101)、[`DefaultAgentRunner.java:99`](file:///D:/agent/agent-sdk/agent-core/src/main/java/com/agent/agentcorelab/agent/DefaultAgentRunner.java#L99)
-* **现状缺陷**：Starter 默认注册了全局单例 `agentRunner` Bean，而 `DefaultAgentRunner` 内部持有全局互斥排他锁（单 Runner 只能跑一个任务）。下游应用为了支撑多个用户会话，各自手写了数百行重复且脆弱的会话管理代码。
+* **状态**：`✅ 已完成`
+* **涉及代码**：[`SessionRunnerManager.java`](file:///D:/agent/agent-sdk/agent-core/src/main/java/com/agent/agentcorelab/agent/SessionRunnerManager.java)、[`DefaultSessionRunnerManager.java`](file:///D:/agent/agent-sdk/agent-core/src/main/java/com/agent/agentcorelab/agent/DefaultSessionRunnerManager.java)、[`AgentConfiguration.java`](file:///D:/agent/agent-sdk/agent-spring-boot-starter/src/main/java/com/agent/agentcorelab/bootstrap/AgentConfiguration.java)、[`AgentProperties.java`](file:///D:/agent/agent-sdk/agent-spring-boot-starter/src/main/java/com/agent/agentcorelab/bootstrap/AgentProperties.java)
+* **现状缺陷**：Starter 默认注册了全局单例 `agentRunner` Bean，而 `DefaultAgentRunner` 内部持有全局互斥排他锁（单 Runner 只能跑一个任务）。下游应用为了支撑多个并发用户会话，各自手写了数百行重复且脆弱的会话管理代码。
 * **优化实施方案**：
-  1. 废除 Starter 强制注入全局单例 `agentRunner` 的方式（或标记为 `@Deprecated` 并默认切换）；
-  2. 在 Starter 中提供生产级轻量 `SessionRunnerManager`；
-  3. 支持按 `sessionId` 独立管理并隔离 Runner 实例；
-  4. 支持基于 LRU 容量上限控制（防止会话泄漏 OOM）以及基于 `waitingTimeout` 的闲置会话自动逐出机制。
+  1. 在 `agent-core` 中引入标准 [`SessionRunnerManager`](file:///D:/agent/agent-sdk/agent-core/src/main/java/com/agent/agentcorelab/agent/SessionRunnerManager.java) 接口及其开箱即用实现 [`DefaultSessionRunnerManager`](file:///D:/agent/agent-sdk/agent-core/src/main/java/com/agent/agentcorelab/agent/DefaultSessionRunnerManager.java)；
+  2. 支持按 `sessionId` 独立获取/创建隔离的 `AgentRunner` 实例，提供便捷的 `getOrCreateConversation` 快速接入多轮对话；
+  3. 基于访问顺序（Access-Order）`LinkedHashMap` 实现 LRU 容量管理（默认上限 1000 会话，可配置）；
+  4. **运行态会话绝对保护**：处于 `RUNNING` 状态的活跃任务即使成为最久未访问条目，也严禁被 LRU 驱逐，自动顺延寻找非运行态候选；
+  5. 支持基于 `idleTimeout`（默认 30m）的主动闲置驱逐机制，且在锁外安全执行 `runner.close()`，避免长连接/清理阻塞主锁；
+  6. 在 Starter 的 [`AgentConfiguration`](file:///D:/agent/agent-sdk/agent-spring-boot-starter/src/main/java/com/agent/agentcorelab/bootstrap/AgentConfiguration.java) 中将 `SessionRunnerManager` 注册为核心 Bean，并自动绑定 Micrometer 度量指标 `agent.sessions.active` 与 `agent.sessions.evicted`；
+  7. 原全局单例 `agentRunner` 标记为 `@Deprecated(since = "1.1.0")`，兼顾旧应用向后兼容。
 * **验收标准**：
-  * 并发多会话单测：多个不同 `sessionId` 能够并发运行且互不阻塞排队；
-  * 容量溢出单测：超过配置的 `maxActiveSessions` 时按照 LRU 策略安全释放淘汰。
+  * [`SessionRunnerManagerTests.java`](file:///D:/agent/agent-sdk/agent-core/src/test/java/com/agent/agentcorelab/agent/SessionRunnerManagerTests.java)（8 组单测通过）：
+    - 多会话并发执行互不阻塞、无任务冲突异常；
+    - LRU 满载时淘汰最老非运行态会话；
+    - 运行中会话防误驱逐保护；
+    - 全员 RUNNING 时容量保护防爆抛出受控异常；
+    - `evictIdle` 超时安全驱逐与资源释放。
+  * [`SessionRunnerManagerSpringBootTests.java`](file:///D:/agent/agent-sdk/agent-spring-boot-starter/src/test/java/com/agent/agentcorelab/bootstrap/SessionRunnerManagerSpringBootTests.java)（3 组 Spring 环境测试通过）：
+    - Starter 自动装配、配置属性绑定（`agent.session.*`）与指标监控全链路闭环。
+  * Reactor 全模块构建及测试 100% 通过。
 
 ---
 
-### 任务 07：等待超时（waitingTimeout）配置化
+### 任务 07：等待超时（waitingTimeout）配置化与全链路联动
 
-* **状态**：`⏳ 待开始`
-* **涉及代码**：[`AgentProperties.java`](file:///D:/agent/agent-sdk/agent-spring-boot-starter/src/main/java/com/agent/agentcorelab/bootstrap/AgentProperties.java)、[`RunLimits.java`](file:///D:/agent/agent-sdk/agent-core/src/main/java/com/agent/agentcorelab/agent/run/RunLimits.java)
-* **现状缺陷**：挂起等待用户输入（`WAITING_INPUT`）或等待审批（`WAITING_APPROVAL`）的超时时间在配置类中缺乏清晰的 YAML 暴露，应用无法根据业务弹性调整等待窗口。
+* **状态**：`✅ 已完成`
+* **涉及代码**：[`AgentProperties.java`](file:///D:/agent/agent-sdk/agent-spring-boot-starter/src/main/java/com/agent/agentcorelab/bootstrap/AgentProperties.java)、[`RunLimits.java`](file:///D:/agent/agent-sdk/agent-core/src/main/java/com/agent/agentcorelab/agent/run/RunLimits.java)、[`DefaultAgentRunner.java:274-285`](file:///D:/agent/agent-sdk/agent-core/src/main/java/com/agent/agentcorelab/agent/DefaultAgentRunner.java)、[`SessionRunnerManager.java`](file:///D:/agent/agent-sdk/agent-core/src/main/java/com/agent/agentcorelab/agent/SessionRunnerManager.java)、[`AgentLoggingRunEventListener.java`](file:///D:/agent/agent-sdk/agent-spring-boot-starter/src/main/java/com/agent/agentcorelab/bootstrap/logging/AgentLoggingRunEventListener.java)、[`AgentMetricsRunEventListener.java`](file:///D:/agent/agent-sdk/agent-spring-boot-starter/src/main/java/com/agent/agentcorelab/bootstrap/metrics/AgentMetricsRunEventListener.java)
+* **现状缺陷**：挂起等待用户输入（`WAITING_INPUT`）或等待审批（`WAITING_APPROVAL`）的超时时间在配置类中缺乏清晰的 YAML 暴露与单元测试断言；挂起超时被清理时此前未发出专用的 `RUN_TIMEOUT` 跟踪事件，导致运维与监控侧无法感知任务为何超时终止。
 * **优化实施方案**：
-  1. 在 `AgentProperties.LimitsSettings` 中正式开放 `waitingTimeout`（默认 15 分钟，支持 `15m`、`1h` 等 Duration 格式）；
-  2. 将该配置与执行器的会话治理、挂起超时调度器打通，超时自动流转为 `STOPPED / RUN_TIMEOUT`。
+  1. 在 `AgentProperties.LimitsSettings` 中正式开放 `waitingTimeout`（默认 15 分钟，支持 `15m`、`45m`、`1h` 等标准 Duration 格式），并与 `RunLimits` 无缝绑定；
+  2. 在 `DefaultAgentRunner.checkWaitingTimeout()` 中，当挂起等待时间超过 `waitingTimeout` 时，正式触发 `RunEvent.Type.RUN_TIMEOUT` 事件，携带 `timeoutType="WAITING_TIMEOUT"`、`waitingSeconds` 与 `timeoutSeconds` 元数据；
+  3. 将终止状态更新为 `STOPPED`，`reason` 明确设为 `WAITING_TIMEOUT`；
+  4. 在 `SessionRunnerManager` 中打通 `pruneExpiredRuns()` 批量扫描接口，允许宿主系统或调度器一键批量扫描并淘汰多会话中的过期挂起任务；
+  5. 补充日志监听器（输出告警日志 `Run timed out (WAITING_TIMEOUT) after ...s of waiting`）与度量监控（递增 `agent.run.timeouts` 指标）。
 * **验收标准**：
-  * application.yml 中配置 `agent.limits.waiting-timeout=30s` 成功绑定；
-  * 超时清理单测验证挂起超时后资源正确回收。
+  * [`AgentConfigurationTests.java`](file:///D:/agent/agent-sdk/agent-spring-boot-starter/src/test/java/com/agent/agentcorelab/bootstrap/AgentConfigurationTests.java)：单测覆盖 `agent.limits.waiting-timeout=45m` 正确绑定；
+  * [`SessionLifecycleAndApprovalTests.java`](file:///D:/agent/agent-sdk/agent-core/src/test/java/com/agent/agentcorelab/agent/SessionLifecycleAndApprovalTests.java)：单测验证挂起超时被扫描清理并触发 `RUN_TIMEOUT` 事件；
+  * [`SessionRunnerManagerTests.java`](file:///D:/agent/agent-sdk/agent-core/src/test/java/com/agent/agentcorelab/agent/SessionRunnerManagerTests.java)：单测验证多会话批量超时扫描与清理；
+  * [`AgentLoggingRunEventListenerTests.java`](file:///D:/agent/agent-sdk/agent-spring-boot-starter/src/test/java/com/agent/agentcorelab/bootstrap/logging/AgentLoggingRunEventListenerTests.java) 与 [`AgentMetricsRunEventListenerTests.java`](file:///D:/agent/agent-sdk/agent-spring-boot-starter/src/test/java/com/agent/agentcorelab/bootstrap/metrics/AgentMetricsRunEventListenerTests.java)：单测覆盖超时日志与监控指标。
+  * Reactor 全模块测试 100% 通过。
 
 ---
 
 ### 任务 08：目标动态修订（reviseGoal）与取消机制安全加固
 
-* **状态**：`⏳ 待开始`
-* **涉及代码**：[`DefaultAgentRunner.java:1249, 1229`](file:///D:/agent/agent-sdk/agent-core/src/main/java/com/agent/agentcorelab/agent/DefaultAgentRunner.java)
+* **状态**：`✅ 已完成`
+* **涉及代码**：
+  * [`DefaultAgentRunner.java:563, 660`](file:///D:/agent/agent-sdk/agent-core/src/main/java/com/agent/agentcorelab/agent/DefaultAgentRunner.java#L563)
+  * [`TaskPlan.java:37`](file:///D:/agent/agent-sdk/agent-core/src/main/java/com/agent/agentcorelab/agent/plan/TaskPlan.java#L37)
+  * [`ModelSession.java:85`](file:///D:/agent/agent-sdk/agent-core/src/main/java/com/agent/agentcorelab/model/ModelSession.java#L85)
+  * [`OneShotHttpClient.java:144, 525`](file:///D:/agent/agent-sdk/agent-model-spring-ai/src/main/java/com/agent/agentcorelab/model/OneShotHttpClient.java#L144)
+  * [`SpringAiModelGateway.java:399`](file:///D:/agent/agent-sdk/agent-model-spring-ai/src/main/java/com/agent/agentcorelab/model/SpringAiModelGateway.java#L399)
 * **现状缺陷**：
-  1. `reviseGoal` 未严格校验版本单调递增，网络乱序可能导致旧版本覆盖新目标；
-  2. `cancel` 中断在长模型请求或工具执行时可能受排他锁阻塞，无法快速响应取消请求。
+  1. `reviseGoal` 未严格校验版本单调递增，网络乱序可能导致旧版本覆盖新目标；且修订后未同步更新或重建 `TaskPlan`，导致后续模型调用 `updatePlan` 发生 `GOAL_VERSION_MISMATCH` 校验失败；
+  2. `cancel` 中断在长模型请求或工具执行时受 `owner` 排他锁阻塞或 `tryLock()` 失败被静默跳过，且无法快速通知底层活跃网络连接与工作线程，导致长时间无法流转为 `CANCELLED`。
 * **优化实施方案**：
-  1. `reviseGoal` 增加版本单调递增断言（`newVersion > currentVersion`），拒绝乱序与回滚修订，并原子化重建 `TaskPlan`；
-  2. `cancel` 采用无锁原子状态位（`AtomicBoolean / AtomicReference`）通知，并协同底层 HTTP 传输（`Call.cancel()`）实现非阻塞即时中断。
-* **验收标准**：
-  * 乱序目标修订测试：旧版本修订请求被安全拒绝；
-  * 取消中断测试：长时间工具执行或模型请求时调用 `cancel`，能够立刻响应并流转为 `CANCELLED`。
+  1. **严格版本递增校验**：在 `reviseGoal` 入口强制断言 `revisedBrief.goalVersion() > currentVersion`，对相同版本、旧版本及回滚修订统一抛出具象 `IllegalArgumentException`；
+  2. **计划原子化同步重建**：引入 `TaskPlan.forRevisedGoal(newGoalVersion)`，在修订目标时将任务计划重置为对应版本的初始空计划（revision=0），确保后续大模型 `updatePlan` 顺利按新版本推进；
+  3. **非阻塞原子取消通知**：重构 `cancel(UUID runId)`，彻底移除对 `owner` 排他锁的依赖；在 `synchronized (state)` 保护下原子更新 `cancelled` 标志并将等待态或运行态任务即时流转为 `CANCELLED`，确保 `snapshot().status()` 毫秒级立即可见；
+  4. **底层传输协同中断**：
+     * `ModelSession` 扩展默认 `cancel()` 接口方法；
+     * `OneShotHttpClient` 引入 `AtomicReference<Call> activeCall`，在 `cancel()` 时联动触发 OkHttp 底层 `Call.cancel()` 与 `dispatcher().cancelAll()`，瞬间打断在途网络阻塞；
+     * 执行器在 `drive()` 期间记录活跃工作线程并在取消时触发线程中断，工具抛出 `CancellationException` 或被中断时安全退出并记录 `INTERRUPTED_CANCELLED`；
+  5. **幂等终态防护**：在 `finish`、`release` 与 `emitFinished` 中加入锁与状态门禁，一旦任务流转为 `CANCELLED`，禁止被后续异步异常或延迟结果覆盖为 `FAILED` 或 `COMPLETED`，且资源释放与指标递减保证严格只执行一次。
+* **验收测试**：
+  * [`ExplicitPlanningAndTaskBriefTests.java`](file:///D:/agent/agent-sdk/agent-core/src/test/java/com/agent/agentcorelab/agent/ExplicitPlanningAndTaskBriefTests.java)：
+    * `reviseGoal_strictlyMonotonicVersionEnforced`：覆盖同版本、过期旧版本乱序请求被安全拒绝；
+    * `reviseGoal_synchronizesAndRebuildsTaskPlan`：验证目标修订后计划原子重建并成功衔接后续 `updatePlan`。
+  * [`SessionLifecycleAndApprovalTests.java`](file:///D:/agent/agent-sdk/agent-core/src/test/java/com/agent/agentcorelab/agent/SessionLifecycleAndApprovalTests.java)：
+    * `cancelWaitingInputTask_immediatelyCancelledAndReleasesResources`：等待输入任务取消后即时流转为 `CANCELLED` 并拒绝后续 resume；
+    * `cancelWaitingApprovalTask_immediatelyCancelledAndReleasesResources`：等待审批任务取消后即时流转为 `CANCELLED` 并阻止高危工具执行；
+    * `cancelRunningTask_nonBlockingImmediateInterruption`：长时间工具阻塞时调用 `cancel`，验证其毫秒级非阻塞返回、工作线程迅速中断并产生 `RUN_FINISHED` 终态事件。
+  * Reactor 全模块编译构建与全量单元测试 100% 通过（JDK 21）。
 
 ---
 

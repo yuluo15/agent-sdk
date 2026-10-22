@@ -14,20 +14,29 @@ import java.util.Objects;
 public final class AgentProperties {
     private final RunLimits limits;
     private final Workspace workspace;
+    private final SessionSettings session;
 
     @ConstructorBinding
-    public AgentProperties(@DefaultValue LimitsSettings limits, @DefaultValue WorkspaceSettings workspace) {
+    public AgentProperties(@DefaultValue LimitsSettings limits,
+                           @DefaultValue WorkspaceSettings workspace,
+                           @DefaultValue SessionSettings session) {
         this(new RunLimits(limits.maxModelRequests(), limits.maxToolCalls(), limits.modelTimeout(),
                         limits.activeTimeout(), limits.maxContextTokens(), limits.outputTokenReserve(),
                         limits.maxRepeatedToolCalls(), limits.maxConsecutiveToolErrors(), limits.maxToolResultBytes(),
                         limits.waitingTimeout(), limits.maxModelRetries()),
                 new Workspace(workspace.inputRoot(), workspace.outputRoot(), workspace.traceRoot(),
-                        workspace.createInputIfMissing()));
+                        workspace.createInputIfMissing()),
+                session != null ? session : new SessionSettings(1000, Duration.ofMinutes(30)));
     }
 
     public AgentProperties(RunLimits limits, Workspace workspace) {
+        this(limits, workspace, new SessionSettings(1000, Duration.ofMinutes(30)));
+    }
+
+    public AgentProperties(RunLimits limits, Workspace workspace, SessionSettings session) {
         this.limits = Objects.requireNonNull(limits, "limits");
         this.workspace = Objects.requireNonNull(workspace, "workspace");
+        this.session = Objects.requireNonNull(session, "session");
     }
 
     public RunLimits limits() {
@@ -36,6 +45,10 @@ public final class AgentProperties {
 
     public Workspace workspace() {
         return workspace;
+    }
+
+    public SessionSettings session() {
+        return session;
     }
 
     public record LimitsSettings(
@@ -58,6 +71,12 @@ public final class AgentProperties {
             @DefaultValue("./workspace/output") Path outputRoot,
             @DefaultValue("./workspace/traces") Path traceRoot,
             @DefaultValue("false") boolean createInputIfMissing
+    ) {
+    }
+
+    public record SessionSettings(
+            @DefaultValue("1000") int maxSessions,
+            @DefaultValue("30m") Duration idleTimeout
     ) {
     }
 }

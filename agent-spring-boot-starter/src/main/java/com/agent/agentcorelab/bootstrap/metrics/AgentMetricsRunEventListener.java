@@ -159,6 +159,15 @@ public class AgentMetricsRunEventListener implements RunEventListener {
                         .register(registry)
                         .increment();
 
+                case RUN_TIMEOUT -> {
+                    String timeoutType = extractSafeTag(details.path("timeoutType").asText("TIMEOUT"));
+                    Counter.builder("agent.run.timeouts")
+                            .tags("agent_id", agentId, "type", timeoutType)
+                            .description("Total number of run timeouts (e.g. waiting timeout)")
+                            .register(registry)
+                            .increment();
+                }
+
                 default -> {
                     // Other intermediate events (TOOL_STARTED, MODEL_STARTED, BRIEF_UPDATED, etc.) do not emit metrics
                 }

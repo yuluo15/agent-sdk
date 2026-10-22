@@ -87,6 +87,15 @@ class AgentConfigurationTests {
                 });
     }
 
+    @Test
+    void waitingTimeoutCanBeConfigured() {
+        context.withPropertyValues("agent.limits.waiting-timeout=45m")
+                .run(application -> {
+                    assertNull(application.getStartupFailure());
+                    assertEquals(Duration.ofMinutes(45), application.getBean(AgentProperties.class).limits().waitingTimeout());
+                });
+    }
+
     @ParameterizedTest
     @ValueSource(strings = {
             "max-model-requests=0", "max-tool-calls=-1", "model-timeout=0s", "active-timeout=-1s",

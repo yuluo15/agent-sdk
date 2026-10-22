@@ -3,6 +3,11 @@ package com.agent.agentcorelab.bootstrap;
 import com.agent.agentcorelab.agent.AgentRunner;
 import com.agent.agentcorelab.agent.AgentRunnerFactory;
 import com.agent.agentcorelab.agent.DefaultAgentRunner;
+import com.agent.agentcorelab.agent.DefaultSessionRunnerManager;
+import com.agent.agentcorelab.agent.SessionRunnerManager;
+import io.micrometer.core.instrument.FunctionCounter;
+import io.micrometer.core.instrument.Gauge;
+import io.micrometer.core.instrument.MeterRegistry;
 import com.agent.agentcorelab.model.ModelGateway;
 import com.agent.agentcorelab.scenario.ScenarioPlugin;
 import com.agent.agentcorelab.scenario.ScenarioRegistry;
@@ -94,6 +99,29 @@ public class AgentConfiguration {
     }
 
     @Bean
+    @ConditionalOnBean(AgentRunnerFactory.class)
+    @ConditionalOnMissingBean(SessionRunnerManager.class)
+    public SessionRunnerManager sessionRunnerManager(AgentRunnerFactory factory, AgentProperties properties,
+                                                     ObjectProvider<MeterRegistry> meterRegistryProvider) {
+        DefaultSessionRunnerManager manager = new DefaultSessionRunnerManager(
+                factory, properties.session().maxSessions(), properties.session().idleTimeout());
+        meterRegistryProvider.ifAvailable(registry -> {
+            Gauge.builder("agent.sessions.active", manager, SessionRunnerManager::sessionCount)
+                    .description("Number of currently active managed agent runner sessions")
+                    .register(registry);
+            FunctionCounter.builder("agent.sessions.evicted", manager, SessionRunnerManager::evictedCount)
+                    .description("Total number of evicted agent runner sessions")
+                    .register(registry);
+        });
+        return manager;
+    }
+
+    /**
+     * @deprecated Since 1.1.0. Injecting a global singleton {@link AgentRunner} causes active task conflicts
+     * in multi-user/multi-session environments. Use {@link SessionRunnerManager} or {@link AgentRunnerFactory} instead.
+     */
+    @Bean
+    @Deprecated(since = "1.1.0", forRemoval = false)
     @ConditionalOnBean(AgentRunnerFactory.class)
     @ConditionalOnMissingBean(AgentRunner.class)
     public DefaultAgentRunner agentRunner(AgentRunnerFactory factory) {

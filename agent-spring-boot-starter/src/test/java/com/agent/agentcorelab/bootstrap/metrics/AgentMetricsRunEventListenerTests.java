@@ -192,6 +192,20 @@ class AgentMetricsRunEventListenerTests {
     }
 
     @Test
+    void recordsRunTimeoutMetrics() {
+        UUID runId = UUID.randomUUID();
+        listener.onEvent(new RunEvent(1, runId, Instant.now(), RunEvent.Type.RUN_TIMEOUT,
+                "{\"agentId\":\"it-triage\",\"timeoutType\":\"WAITING_TIMEOUT\",\"waitingSeconds\":900}"));
+
+        Counter timeoutCounter = registry.find("agent.run.timeouts")
+                .tag("agent_id", "it-triage")
+                .tag("type", "WAITING_TIMEOUT")
+                .counter();
+        assertNotNull(timeoutCounter);
+        assertEquals(1.0, timeoutCounter.count());
+    }
+
+    @Test
     void recordsApprovalAndClarificationMetrics() {
         UUID runId = UUID.randomUUID();
         listener.onEvent(new RunEvent(1, runId, Instant.now(), RunEvent.Type.APPROVAL_REQUESTED,

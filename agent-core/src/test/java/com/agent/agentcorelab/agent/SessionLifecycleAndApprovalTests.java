@@ -39,6 +39,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Queue;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
@@ -246,6 +247,8 @@ class SessionLifecycleAndApprovalTests {
 
         RunSnapshot snapshot = runner.snapshot(turn1.snapshot().runId());
         assertEquals(RunStatus.STOPPED, snapshot.status());
+        assertTrue(events.stream().anyMatch(e -> e.type() == RunEvent.Type.RUN_TIMEOUT
+                && e.summary().contains("WAITING_TIMEOUT")));
     }
 
     @Test
@@ -370,6 +373,154 @@ class SessionLifecycleAndApprovalTests {
         // Verify trace events contain toolFinished for call_3
         assertTrue(events.stream().anyMatch(e -> e.type() == RunEvent.Type.TOOL_FINISHED
                 && e.summary().contains("ACTION_SKIPPED")));
+    }
+
+    @Test
+    void cancelWaitingInputTask_immediatelyCancelledAndReleasesResources() {
+        AgentSpec spec = new AgentSpec("input-agent", "Handle waiting input cancellation",
+                Set.of(ClarificationTool.NAME), limits, (r, a) -> CompletionCheck.Result.satisfied());
+
+        session.enqueue(new ModelResponse("Clarifying", List.of(
+                new ToolCall("call-q1", ClarificationTool.NAME, "{\"question\":\"Need confirmation?\"}")
+        ), ModelResponse.FinishReason.TOOL_CALLS, Optional.empty()));
+
+        DefaultAgentRunner runner = new DefaultAgentRunner(
+                (i, g, t) -> session,
+                new ToolCatalog(List.of(new ClarificationTool())),
+                events::add
+        );
+
+        RunResult initialResult = runner.run(spec, new RunRequest("Analyze input", workspace), chunks::add);
+        assertEquals(RunStatus.WAITING_INPUT, initialResult.snapshot().status());
+        UUID runId = initialResult.snapshot().runId();
+
+        // Cancel the waiting run
+        runner.cancel(runId);
+
+        // Immediate snapshot check
+        RunSnapshot snapshot = runner.snapshot(runId);
+        assertEquals(RunStatus.CANCELLED, snapshot.status());
+
+        // Subsequent resume must be rejected
+        assertThrows(IllegalStateException.class, () -> runner.resume(runId, "user answer"));
+
+        // Verify RUN_FINISHED event was emitted with CANCELLED
+        assertTrue(events.stream().anyMatch(e -> e.type() == RunEvent.Type.RUN_FINISHED
+                && e.summary().contains("CANCELLED")));
+
+        // Calling cancel again is idempotent
+        assertDoesNotThrow(() -> runner.cancel(runId));
+    }
+
+    @Test
+    void cancelWaitingApprovalTask_immediatelyCancelledAndReleasesResources() {
+        AtomicInteger counter = new AtomicInteger();
+        Tool rebootTool = createHighRiskTool("rebootServer", counter);
+
+        AgentSpec spec = new AgentSpec("approval-agent", "Handle waiting approval cancellation",
+                Set.of("rebootServer"), limits, (r, a) -> CompletionCheck.Result.satisfied());
+
+        session.enqueue(new ModelResponse("Requesting approval", List.of(
+                new ToolCall("call-reboot", "rebootServer", "{\"target\":\"prod-server-01\"}")
+        ), ModelResponse.FinishReason.TOOL_CALLS, Optional.empty()));
+
+        DefaultAgentRunner runner = new DefaultAgentRunner(
+                (i, g, t) -> session,
+                new ToolCatalog(List.of(rebootTool)),
+                events::add
+        );
+
+        RunResult initialResult = runner.run(spec, new RunRequest("Reboot system", workspace), chunks::add);
+        assertEquals(RunStatus.WAITING_APPROVAL, initialResult.snapshot().status());
+        UUID runId = initialResult.snapshot().runId();
+        String approvalId = initialResult.snapshot().pendingApproval().orElseThrow().approvalId();
+
+        // Cancel the waiting run
+        runner.cancel(runId);
+
+        // Immediate snapshot check
+        RunSnapshot snapshot = runner.snapshot(runId);
+        assertEquals(RunStatus.CANCELLED, snapshot.status());
+
+        // Subsequent approve or reject must be rejected
+        assertThrows(IllegalStateException.class, () -> runner.approve(runId, approvalId));
+        assertThrows(IllegalStateException.class, () -> runner.reject(runId, approvalId, "Too late"));
+
+        // High risk tool must NOT have been executed
+        assertEquals(0, counter.get());
+    }
+
+    @Test
+    void cancelRunningTask_nonBlockingImmediateInterruption() throws Exception {
+        java.util.concurrent.CountDownLatch toolStartedLatch = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.CountDownLatch toolBlockLatch = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.atomic.AtomicReference<UUID> runningRunId = new java.util.concurrent.atomic.AtomicReference<>();
+
+        Tool blockingTool = new Tool() {
+            @Override
+            public ToolDefinition definition() {
+                return new ToolDefinition("blockingTool", "Tool that blocks until released", "{\"type\":\"object\"}");
+            }
+
+            @Override
+            public ToolOutcome execute(String argumentsJson, ToolContext context) {
+                runningRunId.set(context.runId());
+                toolStartedLatch.countDown();
+                try {
+                    // Block for up to 30 seconds or until interrupted
+                    boolean unblocked = toolBlockLatch.await(30, java.util.concurrent.TimeUnit.SECONDS);
+                    if (!unblocked) {
+                        return new ToolOutcome.Failure("TIMEOUT", "Tool timed out", false);
+                    }
+                    return new ToolOutcome.Success("{\"done\":true}");
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new java.util.concurrent.CancellationException("Tool execution interrupted by cancellation");
+                }
+            }
+        };
+
+        AgentSpec spec = new AgentSpec("blocking-agent", "Test immediate non-blocking cancellation",
+                Set.of("blockingTool"), limits, (r, a) -> CompletionCheck.Result.satisfied());
+
+        session.enqueue(new ModelResponse("Executing tool", List.of(
+                new ToolCall("call-block", "blockingTool", "{}")
+        ), ModelResponse.FinishReason.TOOL_CALLS, Optional.empty()));
+
+        DefaultAgentRunner runner = new DefaultAgentRunner(
+                (i, g, t) -> session,
+                new ToolCatalog(List.of(blockingTool)),
+                events::add
+        );
+
+        RunRequest req = new RunRequest("Blocking task", workspace);
+
+        // Run asynchronously in a background thread
+        java.util.concurrent.CompletableFuture<RunResult> future = java.util.concurrent.CompletableFuture.supplyAsync(() ->
+                runner.run(spec, req, chunks::add));
+
+        // Wait until the blocking tool is actually running
+        assertTrue(toolStartedLatch.await(5, java.util.concurrent.TimeUnit.SECONDS), "Tool should have started");
+        UUID runId = runningRunId.get();
+        assertNotNull(runId, "runId should have been set");
+
+        // Cancel from this thread; cancel() must return immediately (<500ms) without blocking
+        long cancelStart = System.currentTimeMillis();
+        runner.cancel(runId);
+        long cancelDuration = System.currentTimeMillis() - cancelStart;
+        assertTrue(cancelDuration < 500, "cancel() must return non-blockingly, took: " + cancelDuration + "ms");
+
+        // Snapshot must immediately reflect CANCELLED
+        assertEquals(RunStatus.CANCELLED, runner.snapshot(runId).status());
+
+        // Background runner thread must terminate promptly
+        RunResult result = future.get(5, java.util.concurrent.TimeUnit.SECONDS);
+        assertEquals(RunStatus.CANCELLED, result.snapshot().status());
+        assertEquals("CANCELLED", result.stopReason());
+
+        // Verify RUN_FINISHED event was emitted
+        assertTrue(events.stream().anyMatch(e -> e.type() == RunEvent.Type.RUN_FINISHED
+                && e.summary().contains("CANCELLED")));
     }
 
     private static final class MockModelSession implements ModelSession {

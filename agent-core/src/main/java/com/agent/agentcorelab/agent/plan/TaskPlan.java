@@ -34,6 +34,10 @@ public record TaskPlan(
         return new TaskPlan(0, goalVersion, "Initial empty plan", List.of());
     }
 
+    public static TaskPlan forRevisedGoal(int newGoalVersion) {
+        return new TaskPlan(0, newGoalVersion, "Plan reset for revised goal v" + newGoalVersion, List.of());
+    }
+
     public record ValidationResult(boolean valid, String code, String message) {
         public static ValidationResult ok() {
             return new ValidationResult(true, "OK", "");

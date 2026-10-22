@@ -42,6 +42,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Queue;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Consumer;
 
@@ -295,6 +296,113 @@ class ExplicitPlanningAndTaskBriefTests {
         boolean briefStreamed = chunks.stream().anyMatch(c -> c.type() == RunStreamChunk.Type.BRIEF_UPDATED
                 && Integer.valueOf(2).equals(c.metadata().get("goalVersion")));
         assertTrue(briefStreamed, "BRIEF_UPDATED chunk should be streamed");
+    }
+
+    @Test
+    void reviseGoal_strictlyMonotonicVersionEnforced() {
+        TaskBrief briefV1 = TaskBrief.of("Initial objective");
+        AgentSpec spec = new AgentSpec("brief-agent", "Enforce monotonic versions",
+                Set.of(ClarificationTool.NAME), limits, (r, a) -> CompletionCheck.Result.satisfied());
+        ToolCatalog catalog = new ToolCatalog(List.of(new ClarificationTool()));
+        DefaultAgentRunner runner = new DefaultAgentRunner((i, g, d) -> session, catalog, events::add);
+
+        session.queue(calls(
+                new ToolCall("call-q1", ClarificationTool.NAME, "{\"question\":\"Need clarification?\"}")
+        ));
+
+        RunResult initialResult = runner.run(spec, new RunRequest("Initial objective", workspace, briefV1));
+        assertEquals(RunStatus.WAITING_INPUT, initialResult.snapshot().status());
+        assertEquals(1, initialResult.snapshot().taskBrief().orElseThrow().goalVersion());
+
+        UUID runId = initialResult.snapshot().runId();
+
+        // 1. Same version (version 1) rejected
+        TaskBrief sameVersionBrief = new TaskBrief(1, "Same version revision", Map.of(), List.of(), List.of());
+        IllegalArgumentException sameVerEx = assertThrows(IllegalArgumentException.class, () ->
+                runner.reviseGoal(runId, sameVersionBrief));
+        assertTrue(sameVerEx.getMessage().contains("must be strictly greater than current version (1), got: 1"),
+                "Should reject revision with same goalVersion: " + sameVerEx.getMessage());
+
+        // 2. Successful revision to version 2
+        TaskBrief briefV2 = briefV1.withRevisedGoal("Revised to version 2"); // version = 2
+        session.queue(calls(
+                new ToolCall("call-q2", ClarificationTool.NAME, "{\"question\":\"Confirm version 2 parameters?\"}")
+        ));
+        RunResult v2Result = runner.reviseGoal(runId, briefV2);
+        assertEquals(RunStatus.WAITING_INPUT, v2Result.snapshot().status());
+        assertEquals(2, v2Result.snapshot().taskBrief().orElseThrow().goalVersion());
+
+        // 3. Stale/out-of-order version 1 rejected when current is 2
+        TaskBrief staleV1Brief = new TaskBrief(1, "Out of order v1 revision", Map.of(), List.of(), List.of());
+        IllegalArgumentException staleEx = assertThrows(IllegalArgumentException.class, () ->
+                runner.reviseGoal(runId, staleV1Brief));
+        assertTrue(staleEx.getMessage().contains("must be strictly greater than current version (2), got: 1"),
+                "Should reject stale revision: " + staleEx.getMessage());
+
+        // 4. Same version 2 rejected when current is 2
+        TaskBrief sameV2Brief = new TaskBrief(2, "Duplicate v2 revision", Map.of(), List.of(), List.of());
+        IllegalArgumentException duplicateEx = assertThrows(IllegalArgumentException.class, () ->
+                runner.reviseGoal(runId, sameV2Brief));
+        assertTrue(duplicateEx.getMessage().contains("must be strictly greater than current version (2), got: 2"),
+                "Should reject duplicate v2 revision: " + duplicateEx.getMessage());
+    }
+
+    @Test
+    void reviseGoal_synchronizesAndRebuildsTaskPlan() {
+        TaskBrief briefV1 = TaskBrief.of("Build comparison matrix");
+        AgentSpec spec = new AgentSpec("plan-agent", "Rebuild plan on goal revision",
+                Set.of(UpdatePlanTool.NAME, ClarificationTool.NAME), limits, (r, a) -> CompletionCheck.Result.satisfied());
+        ToolCatalog catalog = new ToolCatalog(List.of(new ClarificationTool(), new UpdatePlanTool()));
+        DefaultAgentRunner runner = new DefaultAgentRunner((i, g, d) -> session, catalog, events::add);
+
+        // Turn 1: Model updates plan under goalVersion=1 to revision 1
+        session.queue(calls(
+                new ToolCall("call-p1", UpdatePlanTool.NAME, """
+                        {
+                            "expectedRevision": 0,
+                            "goalVersion": 1,
+                            "reason": "Initial planning for v1",
+                            "steps": [
+                                {"stepId": "s1", "title": "Gather data", "status": "ACTIVE"}
+                            ]
+                        }
+                        """)
+        ));
+        // Model then asks clarification to pause in WAITING_INPUT
+        session.queue(calls(
+                new ToolCall("call-q1", ClarificationTool.NAME, "{\"question\":\"Which datasets?\"}")
+        ));
+
+        RunResult r1 = runner.run(spec, new RunRequest("Build comparison matrix", workspace, briefV1));
+        assertEquals(RunStatus.WAITING_INPUT, r1.snapshot().status());
+        assertEquals(1, r1.snapshot().taskPlan().orElseThrow().planRevision());
+        assertEquals(1, r1.snapshot().taskPlan().orElseThrow().goalVersion());
+        assertEquals(1, r1.snapshot().taskPlan().orElseThrow().steps().size());
+
+        // Now user revises goal to version 2
+        TaskBrief briefV2 = briefV1.withRevisedGoal("Build comparison matrix with vendor benchmarks"); // version 2
+
+        // Model receives revision notification and updates plan under goalVersion=2 starting from revision 0!
+        session.queue(calls(
+                new ToolCall("call-p2", UpdatePlanTool.NAME, """
+                        {
+                            "expectedRevision": 0,
+                            "goalVersion": 2,
+                            "reason": "Re-planned for revised goal v2",
+                            "steps": [
+                                {"stepId": "v2-s1", "title": "Gather vendor benchmarks", "status": "ACTIVE"}
+                            ]
+                        }
+                        """)
+        ));
+        session.queue(text("All vendor data compiled. Done."));
+
+        RunResult r2 = runner.reviseGoal(r1.snapshot().runId(), briefV2);
+        assertEquals(RunStatus.COMPLETED, r2.snapshot().status());
+        TaskPlan finalPlan = r2.snapshot().taskPlan().orElseThrow();
+        assertEquals(2, finalPlan.goalVersion(), "Plan goalVersion must match revised brief v2");
+        assertEquals(1, finalPlan.planRevision(), "Plan revision must advance to 1 under goalVersion 2");
+        assertEquals("v2-s1", finalPlan.steps().get(0).stepId());
     }
 
     @Test

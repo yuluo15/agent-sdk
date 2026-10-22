@@ -14,6 +14,7 @@ import com.openai.core.http.HttpClient;
 import com.openai.core.http.HttpRequest;
 import com.openai.core.http.HttpResponse;
 import com.openai.errors.OpenAIIoException;
+import okhttp3.Call;
 import okhttp3.MediaType;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
@@ -31,6 +32,7 @@ import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 
 /** Bounded one-shot transport and raw protocol guard; the SDK still owns request/response mapping. */
@@ -46,22 +48,25 @@ final class OneShotHttpClient implements HttpClient {
     private final boolean ownsTransport;
     private final Consumer<ModelStreamChunk> chunkListener;
     private boolean streamed;
+    private final AtomicReference<Call> activeCall;
 
     OneShotHttpClient() {
-        this(new OkHttpClient.Builder(), true, null);
+        this(new OkHttpClient.Builder(), true, null, null);
     }
 
     OneShotHttpClient(Duration timeout) {
-        this(withTimeout(new OkHttpClient.Builder(), timeout), true, null);
+        this(withTimeout(new OkHttpClient.Builder(), timeout), true, null, null);
     }
 
-    private OneShotHttpClient(OkHttpClient.Builder builder, boolean ownsTransport, Consumer<ModelStreamChunk> chunkListener) {
+    private OneShotHttpClient(OkHttpClient.Builder builder, boolean ownsTransport,
+                              Consumer<ModelStreamChunk> chunkListener, AtomicReference<Call> activeCall) {
         client = builder.retryOnConnectionFailure(false)
                 .followRedirects(false)
                 .followSslRedirects(false)
                 .build();
         this.ownsTransport = ownsTransport;
         this.chunkListener = chunkListener;
+        this.activeCall = activeCall != null ? activeCall : new AtomicReference<>();
     }
 
     OneShotHttpClient withTimeout(Duration timeout) {
@@ -70,7 +75,7 @@ final class OneShotHttpClient implements HttpClient {
 
     OneShotHttpClient withTimeout(Duration timeout, Consumer<ModelStreamChunk> chunkListener) {
         // newBuilder shares only this session's pool/dispatcher; deadlines remain per-client.
-        return new OneShotHttpClient(withTimeout(client.newBuilder(), timeout), false, chunkListener);
+        return new OneShotHttpClient(withTimeout(client.newBuilder(), timeout), false, chunkListener, this.activeCall);
     }
 
     boolean streamed() {
@@ -141,7 +146,9 @@ final class OneShotHttpClient implements HttpClient {
             }
             // Consume a bounded decoded body under OkHttp's call/read deadline, not a timed Future.
             // Synchronous platform DNS resolution is not proven to obey a hard call deadline.
-            try (Response response = client.newCall(builder.build()).execute()) {
+            Call call = client.newCall(builder.build());
+            activeCall.set(call);
+            try (Response response = call.execute()) {
                 int status = response.code();
                 if (!response.isSuccessful()) {
                     // Do not read, retain or let SDK error handling log a provider error body.
@@ -194,6 +201,7 @@ final class OneShotHttpClient implements HttpClient {
         } catch (IOException ex) {
             throw new OpenAIIoException("Model HTTP transport failed", ex);
         } finally {
+            activeCall.set(null);
             if (source != null) {
                 source.close();
             }
@@ -520,10 +528,18 @@ final class OneShotHttpClient implements HttpClient {
         return CompletableFuture.failedFuture(new UnsupportedOperationException("Only synchronous model calls are allowed"));
     }
 
+    public void cancel() {
+        Call call = activeCall.getAndSet(null);
+        if (call != null) {
+            call.cancel();
+        }
+        client.dispatcher().cancelAll();
+    }
+
     @Override
     public void close() {
+        cancel();
         if (ownsTransport) {
-            client.dispatcher().cancelAll();
             client.connectionPool().evictAll();
             client.dispatcher().executorService().shutdown();
         }

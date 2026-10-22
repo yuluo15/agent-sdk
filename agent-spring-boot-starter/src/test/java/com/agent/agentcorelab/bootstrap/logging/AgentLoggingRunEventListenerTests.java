@@ -85,6 +85,15 @@ class AgentLoggingRunEventListenerTests {
     }
 
     @Test
+    void logsRunTimeout(CapturedOutput output) {
+        UUID runId = UUID.randomUUID();
+        listener.onEvent(new RunEvent(6, runId, Instant.now(), RunEvent.Type.RUN_TIMEOUT,
+                "{\"agentId\":\"it-triage\",\"timeoutType\":\"WAITING_TIMEOUT\",\"waitingSeconds\":900}"));
+
+        assertTrue(output.getOut().contains("Run timed out (WAITING_TIMEOUT) after 900s of waiting"));
+    }
+
+    @Test
     void logsToolFinishedAttributingSuccessAndUserFailure(CapturedOutput output) {
         UUID runId = UUID.randomUUID();
 

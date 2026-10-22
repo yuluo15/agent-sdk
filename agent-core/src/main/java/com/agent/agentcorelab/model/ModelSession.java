@@ -79,6 +79,13 @@ public interface ModelSession extends AutoCloseable {
     default void resetTransientFailure() {
     }
 
+    /**
+     * Cancels any in-flight model requests and closes transport resources immediately.
+     */
+    default void cancel() {
+        close();
+    }
+
     @Override
     void close();
 }

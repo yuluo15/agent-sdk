@@ -71,6 +71,7 @@ import java.util.UUID;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Consumer;
 import java.util.function.LongSupplier;
@@ -275,6 +276,12 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
         if (state.status.isWaiting() && state.waitingSince != null) {
             Duration elapsed = Duration.between(state.waitingSince, Instant.now());
             if (elapsed.compareTo(state.spec.limits().waitingTimeout()) > 0) {
+                event(state, RunEvent.Type.RUN_TIMEOUT, Map.of(
+                        "timeoutType", "WAITING_TIMEOUT",
+                        "status", state.status.name(),
+                        "waitingSeconds", elapsed.toSeconds(),
+                        "timeoutSeconds", state.spec.limits().waitingTimeout().toSeconds()
+                ));
                 finish(state, RunStatus.STOPPED, "WAITING_TIMEOUT",
                         "Run timed out after " + elapsed.toSeconds() + "s while waiting for " + state.status.name());
                 release(state);
@@ -566,6 +573,11 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
             if (closed || state != current || terminal(state.status)) {
                 throw new IllegalStateException("Only active or waiting tasks can have their goal revised");
             }
+            int currentVersion = state.taskBrief != null ? state.taskBrief.goalVersion() : 0;
+            if (revisedBrief.goalVersion() <= currentVersion) {
+                throw new IllegalArgumentException("Revised goalVersion must be strictly greater than current version ("
+                        + currentVersion + "), got: " + revisedBrief.goalVersion());
+            }
             return doReviseGoal(state, revisedBrief, listener);
         } finally {
             unlockOwner();
@@ -625,6 +637,7 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
             if (state.resources != null) {
                 state.resources.setGoalVersion(revisedBrief.goalVersion());
             }
+            state.taskPlan = TaskPlan.forRevisedGoal(revisedBrief.goalVersion());
             event(state, RunEvent.Type.BRIEF_UPDATED, Map.of(
                     "goalVersion", revisedBrief.goalVersion(),
                     "objective", revisedBrief.objective()
@@ -653,20 +666,24 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
     @Override
     public void cancel(UUID runId) {
         State state = require(runId);
+        boolean wasWaiting = false;
         synchronized (state) {
             if (terminal(state.status)) {
                 return;
             }
             state.cancelled.set(true);
-        }
-        if (owner.tryLock()) {
-            try {
-                if (state.status.isWaiting()) {
-                    cancelWaiting(state);
-                }
-            } finally {
-                owner.unlock();
+            if (state.status.isWaiting()) {
+                wasWaiting = true;
+                finish(state, RunStatus.CANCELLED, "CANCELLED", "Task cancelled");
+            } else {
+                finish(state, RunStatus.CANCELLED, "CANCELLED", "Task cancelled; existing artifacts were retained");
             }
+        }
+        state.abortActiveOperations();
+        if (wasWaiting) {
+            release(state);
+            emitFinished(state);
+            publish(state);
         }
     }
 
@@ -682,6 +699,7 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
     }
 
     private RunResult drive(State state, StartAction start, Consumer<RunStreamChunk> listener) {
+        state.runnerThread.set(Thread.currentThread());
         state.startedAt = nanoTime.getAsLong();
         state.active = true;
         try {
@@ -800,6 +818,8 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
         } catch (RuntimeException ex) {
             finish(state, RunStatus.FAILED, "INTERNAL_ERROR", "Unexpected runtime error: " + ex.getMessage());
         } finally {
+            state.runnerThread.set(null);
+            Thread.interrupted();
             state.active = false;
             state.accumulatedNanos += nanoTime.getAsLong() - state.startedAt;
             if (terminal(state.status)) {
@@ -978,6 +998,15 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
                             cancelled ? "CANCELLED" : "ACTIVE_TIME_LIMIT", "Tool interrupted by a runtime control condition");
                     skipped(state, calls, index + 1);
                     return;
+                } catch (RuntimeException ex) {
+                    if (state.isCancellationRequested()) {
+                        event(state, RunEvent.Type.TOOL_FINISHED, Map.of("callId", call.callId(), "tool", call.name(),
+                                "outcome", "INTERRUPTED_CANCELLED"));
+                        finish(state, RunStatus.CANCELLED, "CANCELLED", "Tool interrupted by task cancellation");
+                        skipped(state, calls, index + 1);
+                        return;
+                    }
+                    throw ex;
                 }
             }
             accept(state, call, outcome, listener);
@@ -1240,12 +1269,15 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
 
     private void finish(State state, RunStatus status, String reason, String message) {
         synchronized (state) {
-            if (status == RunStatus.COMPLETED) {
-                if (state.isCancellationRequested()) {
-                    status = RunStatus.CANCELLED;
-                    reason = "CANCELLED";
-                    message = "Task cancelled; existing artifacts were retained";
-                } else if (remaining(state).isZero() || remaining(state).isNegative()) {
+            if (state.status == RunStatus.CANCELLED) {
+                return;
+            }
+            if (state.isCancellationRequested()) {
+                status = RunStatus.CANCELLED;
+                reason = "CANCELLED";
+                message = "Task cancelled; existing artifacts were retained";
+            } else if (status == RunStatus.COMPLETED) {
+                if (remaining(state).isZero() || remaining(state).isNegative()) {
                     status = RunStatus.STOPPED;
                     reason = "ACTIVE_TIME_LIMIT";
                     message = "Active processing time exhausted";
@@ -1285,13 +1317,16 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
     }
 
     private void emitFinished(State state) {
-        if (state.traceReady && !state.finishedEvent) {
-            try {
-                event(state, RunEvent.Type.RUN_FINISHED, Map.of("status", state.status.name(), "reason", state.reason));
-                state.finishedEvent = true;
-            } catch (RuntimeException ex) {
-                failWithoutEvent(state, "STORAGE_FAILED", "The final run event could not be recorded");
+        synchronized (state) {
+            if (!state.traceReady || state.finishedEvent) {
+                return;
             }
+            state.finishedEvent = true;
+        }
+        try {
+            event(state, RunEvent.Type.RUN_FINISHED, Map.of("status", state.status.name(), "reason", state.reason));
+        } catch (RuntimeException ex) {
+            failWithoutEvent(state, "STORAGE_FAILED", "The final run event could not be recorded");
         }
     }
 
@@ -1379,6 +1414,12 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
     }
 
     private void release(State state) {
+        synchronized (state) {
+            if (state.released) {
+                return;
+            }
+            state.released = true;
+        }
         try {
             try {
                 if (state.session != null) {
@@ -1543,6 +1584,25 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
         private TaskBrief taskBrief;
         private TaskPlan taskPlan;
         private int maxCorrections = 2;
+        private final AtomicReference<Thread> runnerThread = new AtomicReference<>();
+        private boolean released;
+
+        private void abortActiveOperations() {
+            ModelSession s = this.session;
+            if (s != null) {
+                try {
+                    s.cancel();
+                } catch (Exception ignored) {
+                }
+            }
+            Thread t = this.runnerThread.get();
+            if (t != null && t != Thread.currentThread()) {
+                try {
+                    t.interrupt();
+                } catch (Exception ignored) {
+                }
+            }
+        }
 
         private boolean isCancellationRequested() {
             return closed || cancelled.get() || request.cancellationRequested().getAsBoolean();

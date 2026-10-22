@@ -396,6 +396,12 @@ public final class SpringAiModelGateway implements ModelGateway {
         }
 
         @Override
+        public void cancel() {
+            closed = true;
+            transport.cancel();
+        }
+
+        @Override
         public void close() {
             closed = true;
             pending.clear();

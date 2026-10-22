@@ -159,6 +159,12 @@ public class AgentLoggingRunEventListener implements RunEventListener {
                 String feedback = truncate(details.path("feedback").asText(""), properties.getMaxTextLength());
                 log.warn("[runId={}] [agent={}] Incomplete deliverable detected. Retrying with feedback: '{}'", runId, agentId, feedback);
             }
+            case RUN_TIMEOUT -> {
+                String timeoutType = details.path("timeoutType").asText("TIMEOUT");
+                long waitingSeconds = details.path("waitingSeconds").asLong(0);
+                log.warn("[runId={}] [agent={}] Run timed out ({}) after {}s of waiting",
+                        runId, agentId, timeoutType, waitingSeconds);
+            }
             case RUN_FINISHED -> {
                 String status = details.path("status").asText("UNKNOWN");
                 String reason = details.path("reason").asText("UNKNOWN");
