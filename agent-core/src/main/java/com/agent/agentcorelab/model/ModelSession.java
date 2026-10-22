@@ -59,6 +59,26 @@ public interface ModelSession extends AutoCloseable {
         return false;
     }
 
+    /**
+     * Determines whether the given exception thrown by {@link #nextResponse} indicates a transient
+     * fault (e.g. rate limit HTTP 429, server 5xx, network timeout, or connection error) that
+     * may safely be retried before any response output was accepted or emitted.
+     *
+     * @param error the exception thrown during model invocation
+     * @return true if the error is considered transient and eligible for limited retry
+     */
+    default boolean isTransientFailure(Throwable error) {
+        return false;
+    }
+
+    /**
+     * If the previous call to {@link #nextResponse} failed due to a transient error and no output
+     * was accepted into the session, resets internal failure flags so the Runner can perform
+     * a budgeted retry attempt.
+     */
+    default void resetTransientFailure() {
+    }
+
     @Override
     void close();
 }

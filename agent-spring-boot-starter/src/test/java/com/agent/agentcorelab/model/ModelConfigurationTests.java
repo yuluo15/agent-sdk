@@ -139,10 +139,36 @@ class ModelConfigurationTests {
     }
 
     @Test
-    void defaultEstimatorRemainsConservativeWithoutEnablingTheModel() {
+    void defaultEstimatorUsesCharacterWeightedWithoutEnablingTheModel() {
         context.run(result -> {
             assertNull(result.getStartupFailure());
-            assertEquals(6, result.getBean(TokenEstimator.class).estimate("model", "中文"));
+            // "中文" has 2 CJK characters: 2 * 0.70 * 1.15 = 1.61 -> ceil is 2 tokens (not legacy 6 bytes)
+            assertEquals(2, result.getBean(TokenEstimator.class).estimate("model", "中文"));
+        });
+    }
+
+    @Test
+    void canConfigureConservativeUtf8Estimator() {
+        context.withPropertyValues("agent.model.token-estimator.type=conservative-utf8")
+                .run(result -> {
+                    assertNull(result.getStartupFailure());
+                    // In UTF-8, "中文" takes 6 bytes
+                    assertEquals(6, result.getBean(TokenEstimator.class).estimate("model", "中文"));
+                });
+    }
+
+    @Test
+    void canConfigureCustomCharacterWeights() {
+        context.withPropertyValues(
+                "agent.model.token-estimator.ascii-weight=0.5",
+                "agent.model.token-estimator.non-ascii-weight=1.0",
+                "agent.model.token-estimator.safety-buffer=1.0"
+        ).run(result -> {
+            assertNull(result.getStartupFailure());
+            // 2 CJK chars * 1.0 = 2 tokens
+            assertEquals(2, result.getBean(TokenEstimator.class).estimate("model", "中文"));
+            // 5 ASCII chars * 0.5 = 2.5 -> ceil is 3 tokens
+            assertEquals(3, result.getBean(TokenEstimator.class).estimate("model", "Hello"));
         });
     }
 

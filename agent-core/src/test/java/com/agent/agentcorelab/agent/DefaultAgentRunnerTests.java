@@ -8,9 +8,11 @@ import com.agent.agentcorelab.agent.run.RunRequest;
 import com.agent.agentcorelab.agent.run.RunResult;
 import com.agent.agentcorelab.agent.run.RunSnapshot;
 import com.agent.agentcorelab.agent.run.RunStatus;
+import com.agent.agentcorelab.agent.run.RunStreamChunk;
 import com.agent.agentcorelab.model.ModelGateway;
 import com.agent.agentcorelab.model.ModelResponse;
 import com.agent.agentcorelab.model.ModelSession;
+import com.agent.agentcorelab.model.ModelStreamChunk;
 import com.agent.agentcorelab.tool.Tool;
 import com.agent.agentcorelab.tool.ToolCall;
 import com.agent.agentcorelab.tool.ToolCatalog;
@@ -293,7 +295,129 @@ class DefaultAgentRunnerTests {
     @Test
     void requestTimeoutIsDifferentFromTotalTimeout() {
         session.steps.add(() -> { throw new IllegalStateException(new HttpTimeoutException("timeout")); });
+        session.steps.add(() -> { throw new IllegalStateException(new HttpTimeoutException("timeout")); });
         assertEquals("MODEL_TIMEOUT", run().stopReason());
+        assertEquals(2, session.requests);
+    }
+
+    @Test
+    void transientTimeoutRetriesAndSucceedsOnSecondAttempt() {
+        session.steps.add(() -> { throw new IllegalStateException(new HttpTimeoutException("timeout")); });
+        session.steps.add(() -> text("recovered after timeout"));
+        RunResult result = run();
+        assertEquals(RunStatus.COMPLETED, result.snapshot().status());
+        assertEquals("recovered after timeout", result.message());
+        assertEquals(2, result.snapshot().metrics().modelRequests());
+        assertEquals(2, session.requests);
+        List<RunEvent> retryEvents = events.stream()
+                .filter(e -> e.type() == RunEvent.Type.MODEL_RETRY)
+                .toList();
+        assertEquals(1, retryEvents.size());
+        assertTrue(retryEvents.get(0).summary().contains("\"attempt\":1"));
+    }
+
+    @Test
+    void streamingAlreadyEmittedChunksDoesNotRetryOnTransientError() {
+        List<RunStreamChunk> chunks = new ArrayList<>();
+        session.onStreaming = (timeout, chunkListener) -> {
+            if (chunkListener != null) {
+                chunkListener.accept(ModelStreamChunk.text("partial emitted"));
+            }
+            throw new IllegalStateException(new HttpTimeoutException("connection dropped after stream"));
+        };
+        RunResult result = runWithListener(chunks::add);
+        assertEquals(RunStatus.FAILED, result.snapshot().status());
+        assertEquals("MODEL_TIMEOUT", result.stopReason());
+        assertEquals(1, session.requests);
+        long retryCount = events.stream().filter(e -> e.type() == RunEvent.Type.MODEL_RETRY).count();
+        assertEquals(0, retryCount);
+    }
+
+    @Test
+    void modelRequestBudgetLimitsRetryAttempts() {
+        limits = new RunLimits(1, 30, Duration.ofSeconds(60), Duration.ofSeconds(300));
+        session.steps.add(() -> { throw new IllegalStateException(new HttpTimeoutException("timeout")); });
+        RunResult result = run();
+        assertEquals(RunStatus.FAILED, result.snapshot().status());
+        assertEquals("MODEL_TIMEOUT", result.stopReason());
+        assertEquals(1, session.requests);
+        assertEquals(1, result.snapshot().metrics().modelRequests());
+    }
+
+    @Test
+    void transientConnectionErrorRetriesAndSucceeds() {
+        session.steps.add(() -> { throw new RuntimeException(new java.net.ConnectException("Connection refused")); });
+        session.steps.add(() -> text("connection recovered"));
+        RunResult result = run();
+        assertEquals(RunStatus.COMPLETED, result.snapshot().status());
+        assertEquals("connection recovered", result.message());
+        assertEquals(2, session.requests);
+    }
+
+    @Test
+    void maxModelRetriesConfigurableAndRespected() {
+        limits = new RunLimits(16, 30, Duration.ofSeconds(60), Duration.ofSeconds(300),
+                32768, 4096, 3, 3, 16384, Duration.ofMinutes(15), 2);
+        session.steps.add(() -> { throw new IllegalStateException(new HttpTimeoutException("timeout 1")); });
+        session.steps.add(() -> { throw new IllegalStateException(new HttpTimeoutException("timeout 2")); });
+        session.steps.add(() -> text("recovered on 3rd attempt"));
+        RunResult result = run();
+        assertEquals(RunStatus.COMPLETED, result.snapshot().status());
+        assertEquals("recovered on 3rd attempt", result.message());
+        assertEquals(3, session.requests);
+        assertEquals(3, result.snapshot().metrics().modelRequests());
+        long retryEventCount = events.stream().filter(e -> e.type() == RunEvent.Type.MODEL_RETRY).count();
+        assertEquals(2, retryEventCount);
+    }
+
+    @Test
+    void deliverableRepairEmitsDeliverableRetryAndRunStartedRemainsUnique() {
+        completion = (run, answer) -> {
+            if ("first attempt".equals(answer)) {
+                return new CompletionCheck.Result(false, "Missing summary.md");
+            }
+            return new CompletionCheck.Result(true, "All good");
+        };
+        session.add(text("first attempt"));
+        session.add(text("fixed summary"));
+        RunResult result = run();
+        assertEquals(RunStatus.COMPLETED, result.snapshot().status());
+        assertEquals("fixed summary", result.message());
+
+        long runStartedCount = events.stream().filter(e -> e.type() == RunEvent.Type.RUN_STARTED).count();
+        assertEquals(1, runStartedCount, "RUN_STARTED must be strictly unique per run");
+
+        List<RunEvent> retryEvents = events.stream()
+                .filter(e -> e.type() == RunEvent.Type.DELIVERABLE_RETRY)
+                .toList();
+        assertEquals(1, retryEvents.size());
+        assertTrue(retryEvents.get(0).summary().contains("Missing summary.md"));
+    }
+
+    @Test
+    void compactionEmitsCompactionTriggeredAndRunStartedRemainsUnique() {
+        // maxContextTokens = 1000, outputReserve = 100 -> contextBudget = 900
+        // 75% of contextBudget = 675
+        limits = new RunLimits(16, 30, Duration.ofSeconds(60), Duration.ofSeconds(300),
+                1000, 100, 3, 3, 16384, Duration.ofMinutes(15), 1);
+        session.estimatedTokens = 700; // > 675, triggers compaction
+        session.compactSucceeds = true;
+        session.tokensAfterCompact = 400;
+        session.add(text("compacted answer"));
+
+        RunResult result = run();
+        assertEquals(RunStatus.COMPLETED, result.snapshot().status());
+        assertEquals("compacted answer", result.message());
+
+        long runStartedCount = events.stream().filter(e -> e.type() == RunEvent.Type.RUN_STARTED).count();
+        assertEquals(1, runStartedCount, "RUN_STARTED must never be re-emitted on compaction");
+
+        List<RunEvent> compactionEvents = events.stream()
+                .filter(e -> e.type() == RunEvent.Type.COMPACTION_TRIGGERED)
+                .toList();
+        assertEquals(1, compactionEvents.size());
+        assertTrue(compactionEvents.get(0).summary().contains("\"compacted\":true"));
+        assertTrue(compactionEvents.get(0).summary().contains("\"tokensAfter\":400"));
     }
 
     @Test
@@ -579,6 +703,12 @@ class DefaultAgentRunnerTests {
         return runner.run(spec, new RunRequest("Inspect controlled inputs", workspace));
     }
 
+    private RunResult runWithListener(java.util.function.Consumer<RunStreamChunk> listener) {
+        AgentSpec spec = new AgentSpec("test-agent", "Perform a bounded test task.",
+                Set.of("count", ClarificationTool.NAME), limits, completion);
+        return runner.run(spec, new RunRequest("Inspect controlled inputs", workspace), listener);
+    }
+
     private DefaultAgentRunner runner(Tool tool) {
         return new DefaultAgentRunner(gateway(), catalog(tool), events::add, time::get);
     }
@@ -630,8 +760,22 @@ class DefaultAgentRunnerTests {
         private Runnable beforeEstimate = () -> {};
         private Runnable beforeClose = () -> {};
 
+        private java.util.function.BiConsumer<Duration, java.util.function.Consumer<ModelStreamChunk>> onStreaming;
+
+        private boolean compactSucceeds;
+        private long tokensAfterCompact = 50;
+
         void add(ModelResponse response) {
             steps.add(() -> response);
+        }
+
+        @Override
+        public boolean compactContext(long targetTokenBudget) {
+            if (compactSucceeds) {
+                this.estimatedTokens = tokensAfterCompact;
+                return true;
+            }
+            return false;
         }
 
         @Override
@@ -639,6 +783,16 @@ class DefaultAgentRunnerTests {
             assertFalse(timeout.isNegative() || timeout.isZero());
             requests++;
             return steps.removeFirst().get();
+        }
+
+        @Override
+        public ModelResponse nextResponse(Duration timeout, java.util.function.Consumer<ModelStreamChunk> chunkListener) {
+            if (onStreaming != null) {
+                requests++;
+                onStreaming.accept(timeout, chunkListener);
+                return null;
+            }
+            return ModelSession.super.nextResponse(timeout, chunkListener);
         }
 
         @Override

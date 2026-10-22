@@ -111,6 +111,12 @@ public class AgentMetricsRunEventListener implements RunEventListener {
                         .register(registry)
                         .increment();
 
+                case MODEL_RETRY -> Counter.builder("agent.run.model.retries")
+                        .tags("agent_id", agentId)
+                        .description("Total model transient retries executed by agent runs")
+                        .register(registry)
+                        .increment();
+
                 case TOOL_FINISHED -> {
                     String tool = extractSafeTag(details.path("tool").asText("unknown"));
                     Counter.builder("agent.run.tool.calls")
@@ -138,6 +144,18 @@ public class AgentMetricsRunEventListener implements RunEventListener {
                 case WAITING_INPUT -> Counter.builder("agent.run.clarifications.requested")
                         .tags("agent_id", agentId)
                         .description("Total clarification requests waiting for human input")
+                        .register(registry)
+                        .increment();
+
+                case COMPACTION_TRIGGERED -> Counter.builder("agent.run.context.compactions")
+                        .tags("agent_id", agentId)
+                        .description("Total context compactions triggered by agent runs")
+                        .register(registry)
+                        .increment();
+
+                case DELIVERABLE_RETRY -> Counter.builder("agent.run.deliverable.retries")
+                        .tags("agent_id", agentId)
+                        .description("Total deliverable completion repair retries triggered by agent runs")
                         .register(registry)
                         .increment();
 

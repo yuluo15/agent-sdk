@@ -14,8 +14,19 @@ import org.springframework.context.annotation.Bean;
 public class ModelConfiguration {
     @Bean
     @ConditionalOnMissingBean(TokenEstimator.class)
-    public TokenEstimator tokenEstimator() {
-        return TokenEstimator.conservativeUtf8();
+    public TokenEstimator tokenEstimator(ModelProperties properties) {
+        ModelProperties.TokenEstimatorProperties props = properties.getTokenEstimator();
+        if (props != null && "conservative-utf8".equalsIgnoreCase(props.getType())) {
+            return TokenEstimator.conservativeUtf8();
+        }
+        if (props != null) {
+            return TokenEstimator.characterWeighted(
+                    props.getAsciiWeight(),
+                    props.getNonAsciiWeight(),
+                    props.getSafetyBuffer()
+            );
+        }
+        return TokenEstimator.defaultEstimator();
     }
 
     @Bean

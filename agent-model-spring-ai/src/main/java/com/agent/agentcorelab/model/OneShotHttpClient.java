@@ -145,7 +145,7 @@ final class OneShotHttpClient implements HttpClient {
                 int status = response.code();
                 if (!response.isSuccessful()) {
                     // Do not read, retain or let SDK error handling log a provider error body.
-                    throw new ModelCallException("MODEL_REQUEST_FAILED");
+                    throw new ModelCallException("MODEL_REQUEST_FAILED", status);
                 }
                 String contentType = response.header("Content-Type", "");
                 boolean isSse = contentType != null && contentType.toLowerCase(Locale.ROOT).contains("text/event-stream");

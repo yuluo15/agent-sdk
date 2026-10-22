@@ -56,6 +56,35 @@ class AgentLoggingRunEventListenerTests {
     }
 
     @Test
+    void logsModelRetryOnTransientFault(CapturedOutput output) {
+        UUID runId = UUID.randomUUID();
+        listener.onEvent(new RunEvent(3, runId, Instant.now(), RunEvent.Type.MODEL_RETRY,
+                "{\"agentId\":\"it-triage\",\"request\":2,\"attempt\":1,\"error\":\"Connection reset by peer\"}"));
+
+        assertTrue(output.getOut().contains("[MODEL_TRANSIENT_RETRY]"));
+        assertTrue(output.getOut().contains("Model request #2 attempt #1 encountered transient error"));
+        assertTrue(output.getOut().contains("Connection reset by peer"));
+    }
+
+    @Test
+    void logsCompactionTriggered(CapturedOutput output) {
+        UUID runId = UUID.randomUUID();
+        listener.onEvent(new RunEvent(4, runId, Instant.now(), RunEvent.Type.COMPACTION_TRIGGERED,
+                "{\"agentId\":\"it-triage\",\"compacted\":true,\"tokensAfter\":4200}"));
+
+        assertTrue(output.getOut().contains("Context compaction triggered (tokensAfter=4200)"));
+    }
+
+    @Test
+    void logsDeliverableRetry(CapturedOutput output) {
+        UUID runId = UUID.randomUUID();
+        listener.onEvent(new RunEvent(5, runId, Instant.now(), RunEvent.Type.DELIVERABLE_RETRY,
+                "{\"agentId\":\"it-triage\",\"completionRepair\":true,\"feedback\":\"Missing report.pdf\"}"));
+
+        assertTrue(output.getOut().contains("Incomplete deliverable detected. Retrying with feedback: 'Missing report.pdf'"));
+    }
+
+    @Test
     void logsToolFinishedAttributingSuccessAndUserFailure(CapturedOutput output) {
         UUID runId = UUID.randomUUID();
 

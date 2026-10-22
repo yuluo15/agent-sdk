@@ -42,4 +42,17 @@ class RunLimitsTests {
         assertThrows(IllegalArgumentException.class,
                 () -> new RunLimits(16, 30, Duration.ofSeconds(60), Duration.ofSeconds(-1)));
     }
+
+    @Test
+    void acceptsConfigurableModelRetries() {
+        RunLimits limits = new RunLimits(16, 30, Duration.ofSeconds(60), Duration.ofSeconds(300),
+                32768, 4096, 3, 3, 16384, Duration.ofMinutes(15), 0);
+        assertEquals(0, limits.maxModelRetries());
+
+        RunLimits defaultLimits = new RunLimits(16, 30, Duration.ofSeconds(60), Duration.ofSeconds(300));
+        assertEquals(1, defaultLimits.maxModelRetries());
+
+        assertThrows(IllegalArgumentException.class, () -> new RunLimits(16, 30,
+                Duration.ofSeconds(60), Duration.ofSeconds(300), 32768, 4096, 3, 3, 16384, Duration.ofMinutes(15), -1));
+    }
 }

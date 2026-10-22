@@ -49,6 +49,8 @@ import java.io.UncheckedIOException;
 import java.net.http.HttpTimeoutException;
 import java.net.SocketTimeoutException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
@@ -337,11 +339,6 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
     @Override
     public UserProfileMemory userProfiles() {
         return userProfiles;
-    }
-
-    private long estimateTokens(String text) {
-        if (text == null || text.isBlank()) return 0;
-        return Math.max(1, text.length() / 4);
     }
 
     @Override
@@ -701,7 +698,7 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
                     long contextBudget = (long) limits.maxContextTokens() - limits.outputTokenReserve();
                     if (state.session.estimatedInputTokens() > (long) (contextBudget * 0.75)) {
                         if (state.session.compactContext((long) (contextBudget * 0.5))) {
-                            event(state, RunEvent.Type.RUN_STARTED, Map.of("compacted", true, "tokensAfter", state.session.estimatedInputTokens()));
+                            event(state, RunEvent.Type.COMPACTION_TRIGGERED, Map.of("compacted", true, "tokensAfter", state.session.estimatedInputTokens()));
                         }
                     }
                     if (state.session.estimatedInputTokens() > contextBudget) {
@@ -711,36 +708,65 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
                     if (controlledStop(state)) {
                         break;
                     }
-                    state.modelRequests++;
-                    event(state, RunEvent.Type.MODEL_STARTED, Map.of("request", state.modelRequests));
-                    if (controlledStop(state)) {
-                        break;
-                    }
-                    ModelResponse response;
-                    long modelStart = nanoTime.getAsLong();
-                    try {
+                    ModelResponse response = null;
+                    int retries = 0;
+                    int maxRetries = limits.maxModelRetries();
+                    while (true) {
+                        state.modelRequests++;
+                        event(state, RunEvent.Type.MODEL_STARTED, Map.of("request", state.modelRequests));
+                        if (controlledStop(state)) {
+                            break;
+                        }
+                        AtomicBoolean outputEmitted = new AtomicBoolean(false);
+                        long modelStart = nanoTime.getAsLong();
                         try {
-                            Duration callTimeout = min(limits.modelTimeout(), remaining(state));
-                            response = listener == null
-                                    ? state.session.nextResponse(callTimeout)
-                                    : state.session.nextResponse(callTimeout, chunk -> {
-                                        if (chunk != null && chunk.text() != null) {
-                                            if (chunk.type() == ModelStreamChunk.Type.THINKING) {
-                                                safeEmit(listener, RunStreamChunk.thinking(chunk.text()));
-                                            } else {
-                                                safeEmit(listener, RunStreamChunk.text(chunk.text()));
+                            try {
+                                Duration callTimeout = min(limits.modelTimeout(), remaining(state));
+                                response = listener == null
+                                        ? state.session.nextResponse(callTimeout)
+                                        : state.session.nextResponse(callTimeout, chunk -> {
+                                            if (chunk != null && chunk.text() != null && !chunk.text().isEmpty()) {
+                                                outputEmitted.set(true);
+                                                if (chunk.type() == ModelStreamChunk.Type.THINKING) {
+                                                    safeEmit(listener, RunStreamChunk.thinking(chunk.text()));
+                                                } else {
+                                                    safeEmit(listener, RunStreamChunk.text(chunk.text()));
+                                                }
                                             }
-                                        }
-                                    });
-                        } finally {
-                            state.modelNanos += Math.max(0L, nanoTime.getAsLong() - modelStart);
-                        }
-                    } catch (RuntimeException ex) {
-                        state.usageKnown = false;
-                        if (!controlledStop(state)) {
+                                        });
+                            } finally {
+                                state.modelNanos += Math.max(0L, nanoTime.getAsLong() - modelStart);
+                            }
+                            break;
+                        } catch (RuntimeException ex) {
+                            state.usageKnown = false;
+                            if (controlledStop(state)) {
+                                break;
+                            }
+                            boolean canRetry = !outputEmitted.get()
+                                    && retries < maxRetries
+                                    && isTransientModelError(state, ex)
+                                    && state.modelRequests < limits.maxModelRequests();
+                            if (canRetry) {
+                                retries++;
+                                if (state.session != null) {
+                                    state.session.resetTransientFailure();
+                                }
+                                event(state, RunEvent.Type.MODEL_RETRY, Map.of(
+                                        "request", state.modelRequests,
+                                        "attempt", retries,
+                                        "error", ex.getMessage() != null ? ex.getMessage() : ex.getClass().getSimpleName()
+                                ));
+                                continue;
+                            }
                             finish(state, RunStatus.FAILED, isTimeout(ex) ? "MODEL_TIMEOUT" : "MODEL_FAILED",
-                                    "Model request failed; no automatic retry was made");
+                                    retries > 0
+                                            ? "Model request failed after " + retries + " retries: " + ex.getMessage()
+                                            : "Model request failed; no automatic retry was made");
+                            break;
                         }
+                    }
+                    if (state.status != RunStatus.RUNNING || controlledStop(state)) {
                         break;
                     }
                     recordUsage(state, response);
@@ -1031,7 +1057,7 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
         if (state.corrections++ == 0) {
             state.session.appendRuntimeFeedback(ToolJson.write(Map.of("code", "INCOMPLETE_DELIVERABLE",
                     "feedback", check.feedback())));
-            event(state, RunEvent.Type.RUN_STARTED, Map.of("completionRepair", true, "feedback", check.feedback()));
+            event(state, RunEvent.Type.DELIVERABLE_RETRY, Map.of("completionRepair", true, "feedback", check.feedback()));
         } else {
             finish(state, RunStatus.STOPPED, "INCOMPLETE_DELIVERABLE", check.feedback());
         }
@@ -1062,21 +1088,107 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
 
         if (!deliverables.isEmpty()) {
             for (String deliverable : deliverables) {
-                boolean found = allArtifacts.stream().anyMatch(a -> {
-                    String filename = a.path().getFileName().toString().toLowerCase(Locale.ROOT);
-                    String id = a.id().toLowerCase(Locale.ROOT);
-                    String expected = deliverable.toLowerCase(Locale.ROOT);
-                    return filename.contains(expected) || id.contains(expected);
-                });
-                if (!found) {
+                boolean satisfied = false;
+                Artifact emptyCandidate = null;
+                Artifact missingFileCandidate = null;
+
+                for (Artifact a : allArtifacts) {
+                    if (matchesDeliverable(a, deliverable)) {
+                        Path path = a.path();
+                        if (path != null && Files.exists(path) && Files.isRegularFile(path)) {
+                            try {
+                                if (Files.size(path) > 0) {
+                                    satisfied = true;
+                                    break;
+                                } else {
+                                    emptyCandidate = a;
+                                }
+                            } catch (IOException e) {
+                                emptyCandidate = a;
+                            }
+                        } else {
+                            missingFileCandidate = a;
+                        }
+                    }
+                }
+
+                if (satisfied) {
+                    continue;
+                }
+
+                if (emptyCandidate != null) {
+                    return CompletionCheck.Result.incomplete(
+                            "EMPTY_DELIVERABLE: Required deliverable '" + deliverable
+                                    + "' (artifact '" + emptyCandidate.id()
+                                    + "') is empty (0 bytes). Please generate non-empty content before completing.");
+                }
+                if (missingFileCandidate != null) {
                     return CompletionCheck.Result.incomplete(
                             "MISSING_DELIVERABLE: Required deliverable '" + deliverable
-                                    + "' is not yet generated in the workspace. Please generate it before completing.");
+                                    + "' was referenced as artifact '" + missingFileCandidate.id()
+                                    + "', but physical file does not exist at '" + missingFileCandidate.path()
+                                    + "'. Please generate it before completing.");
                 }
+                return CompletionCheck.Result.incomplete(
+                        "MISSING_DELIVERABLE: Required deliverable '" + deliverable
+                                + "' is not yet generated in the workspace. Please generate it before completing.");
             }
         }
 
         return currentResult;
+    }
+
+    static boolean matchesDeliverable(Artifact artifact, String deliverable) {
+        if (artifact == null || deliverable == null || deliverable.isBlank()) {
+            return false;
+        }
+        String expected = deliverable.trim();
+        if (artifact.id() != null && artifact.id().equalsIgnoreCase(expected)) {
+            return true;
+        }
+
+        Path path = artifact.path();
+        if (path == null) {
+            return false;
+        }
+
+        Path fileNamePath = path.getFileName();
+        String fileName = fileNamePath != null ? fileNamePath.toString() : "";
+
+        if (!fileName.isEmpty() && fileName.equalsIgnoreCase(expected)) {
+            return true;
+        }
+
+        String baseName = getBaseFileName(fileName);
+        if (!baseName.isEmpty() && baseName.equalsIgnoreCase(expected)) {
+            return true;
+        }
+
+        String expectedBaseName = getBaseFileName(expected);
+        if (artifact.id() != null && !expectedBaseName.isEmpty() && artifact.id().equalsIgnoreCase(expectedBaseName)) {
+            return true;
+        }
+
+        try {
+            Path expectedPath = Path.of(expected);
+            if (expectedPath.getNameCount() > 1 && path.normalize().endsWith(expectedPath.normalize())) {
+                return true;
+            }
+        } catch (Exception ignored) {
+        }
+
+        return false;
+    }
+
+    private static String getBaseFileName(String fileName) {
+        if (fileName == null || fileName.isEmpty()) {
+            return "";
+        }
+        int dot = fileName.lastIndexOf('.');
+        if (dot > 0) {
+            return fileName.substring(0, dot);
+        }
+        return fileName;
     }
 
     private String protocolError(State state, ModelResponse response) {
@@ -1341,6 +1453,27 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
             }
         }
         return false;
+    }
+
+    private static boolean isConnectionError(Throwable error) {
+        for (Throwable cause = error; cause != null; cause = cause.getCause()) {
+            if (cause instanceof java.net.ConnectException
+                    || cause instanceof java.net.UnknownHostException
+                    || cause instanceof java.net.NoRouteToHostException
+                    || cause instanceof java.net.PortUnreachableException
+                    || cause instanceof java.net.SocketException
+                    || cause instanceof java.io.EOFException) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean isTransientModelError(State state, Throwable error) {
+        if (isTimeout(error) || isConnectionError(error)) {
+            return true;
+        }
+        return state.session != null && state.session.isTransientFailure(error);
     }
 
     private static String digest(String value) {

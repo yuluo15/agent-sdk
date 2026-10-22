@@ -241,6 +241,42 @@ class SpringAiModelGatewayTests {
         }
     }
 
+    @ParameterizedTest
+    @ValueSource(ints = {408, 429, 500, 502, 503, 504})
+    void transientFailuresCanBeResetAndRetried(int status) {
+        replies.add(new Reply(status, "{\"error\":{\"message\":\"transient failure\"}}", false, false));
+        replies.add(new Reply(200, completion("{\"role\":\"assistant\",\"content\":\"重试成功\"}", "stop", ""), false, false));
+        try (var session = session()) {
+            ModelCallException error = assertThrows(ModelCallException.class, () -> session.nextResponse(TIMEOUT));
+            assertEquals("MODEL_REQUEST_FAILED", error.code());
+            assertEquals(status, error.statusCode());
+            assertTrue(error.isTransient());
+            assertTrue(session.isTransientFailure(error));
+
+            session.resetTransientFailure();
+            ModelResponse response = session.nextResponse(TIMEOUT);
+            assertEquals("重试成功", response.text());
+            assertEquals(2, requestCount.get());
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(ints = {301, 400, 401, 403, 404})
+    void nonTransientErrorsCannotBeReset(int status) {
+        replies.add(new Reply(status, "{\"error\":{\"message\":\"client error\"}}", false, false));
+        try (var session = session()) {
+            ModelCallException error = assertThrows(ModelCallException.class, () -> session.nextResponse(TIMEOUT));
+            assertEquals("MODEL_REQUEST_FAILED", error.code());
+            assertEquals(status, error.statusCode());
+            assertFalse(error.isTransient());
+            assertFalse(session.isTransientFailure(error));
+
+            session.resetTransientFailure();
+            assertThrows(IllegalStateException.class, () -> session.nextResponse(TIMEOUT));
+            assertEquals(1, requestCount.get());
+        }
+    }
+
     @Test
     void nonSuccessDoesNotWaitForOrRetainAStalledProviderErrorBody() {
         replies.add(new Reply(500, "{\"error\":{\"message\":\"private-stalled-error\"}}", false, true));

@@ -99,6 +99,7 @@ public final class SpringAiModelGateway implements ModelGateway {
         private final OneShotHttpClient transport;
         private boolean closed;
         private boolean failed;
+        private boolean transientFailure;
 
         private Session(String instructions, List<ChatMessage> history, String goal, List<ToolDefinition> tools) {
             this.tools = tools;
@@ -197,12 +198,22 @@ public final class SpringAiModelGateway implements ModelGateway {
                 failed = true;
                 for (Throwable cause = ex; cause != null; cause = cause.getCause()) {
                     if (cause instanceof ModelCallException safe) {
+                        this.transientFailure = safe.isTransient();
                         throw safe;
                     }
                     if (cause instanceof java.net.SocketTimeoutException
                             || cause instanceof HttpTimeoutException
                             || (cause instanceof InterruptedIOException && "timeout".equals(cause.getMessage()))) {
+                        this.transientFailure = true;
                         throw new ModelCallException("MODEL_TIMEOUT", new HttpTimeoutException("Model request timed out"));
+                    }
+                    if (cause instanceof java.net.ConnectException
+                            || cause instanceof java.net.UnknownHostException
+                            || cause instanceof java.net.NoRouteToHostException
+                            || cause instanceof java.net.SocketException
+                            || cause instanceof java.io.EOFException) {
+                        this.transientFailure = true;
+                        throw new ModelCallException("MODEL_REQUEST_FAILED", 0, true);
                     }
                 }
                 // Never propagate provider bodies/headers or SDK exceptions into Runner logs.
@@ -347,6 +358,24 @@ public final class SpringAiModelGateway implements ModelGateway {
                 }
             }
             return changed;
+        }
+
+        @Override
+        public boolean isTransientFailure(Throwable error) {
+            for (Throwable cause = error; cause != null; cause = cause.getCause()) {
+                if (cause instanceof ModelCallException callEx) {
+                    return callEx.isTransient();
+                }
+            }
+            return transientFailure;
+        }
+
+        @Override
+        public void resetTransientFailure() {
+            if (!closed && transientFailure) {
+                failed = false;
+                transientFailure = false;
+            }
         }
 
         List<Message> nativeMessages() {

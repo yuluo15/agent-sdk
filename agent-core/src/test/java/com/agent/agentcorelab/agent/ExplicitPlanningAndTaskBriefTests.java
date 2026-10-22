@@ -403,6 +403,122 @@ class ExplicitPlanningAndTaskBriefTests {
         assertTrue(session.feedback.get(0).contains("STALE_GOAL"));
     }
 
+    @Test
+    void matchesDeliverableUnitTests() {
+        Path reportPdf = Path.of("workspace", "output", "report.pdf");
+        Path reportBak = Path.of("workspace", "output", "my-report.pdf.bak");
+        Path nestedCsv = Path.of("workspace", "output", "exports", "summary.csv");
+
+        Artifact a1 = new Artifact("art_1", reportPdf, "digest1", List.of(), 1);
+        Artifact aBak = new Artifact("art_bak", reportBak, "digest2", List.of(), 1);
+        Artifact aNested = new Artifact("art_nested", nestedCsv, "digest3", List.of(), 1);
+        Artifact aLogical = new Artifact("financial_summary", reportPdf, "digest4", List.of(), 1);
+
+        // Positive: exact filename
+        assertTrue(DefaultAgentRunner.matchesDeliverable(a1, "report.pdf"));
+        // Positive: base name match (without extension)
+        assertTrue(DefaultAgentRunner.matchesDeliverable(a1, "report"));
+        // Positive: artifact ID exact match
+        assertTrue(DefaultAgentRunner.matchesDeliverable(aLogical, "financial_summary"));
+        // Positive: expected filename matches artifact ID base name
+        assertTrue(DefaultAgentRunner.matchesDeliverable(aLogical, "financial_summary.json"));
+        // Positive: nested path match
+        assertTrue(DefaultAgentRunner.matchesDeliverable(aNested, "exports/summary.csv"));
+
+        // Negative: substring prefix / suffix false positives must be rejected!
+        assertFalse(DefaultAgentRunner.matchesDeliverable(aBak, "report.pdf"));
+        assertFalse(DefaultAgentRunner.matchesDeliverable(aBak, "report"));
+        assertFalse(DefaultAgentRunner.matchesDeliverable(a1, "my-report.pdf"));
+        assertFalse(DefaultAgentRunner.matchesDeliverable(a1, "super_report.pdf"));
+        assertFalse(DefaultAgentRunner.matchesDeliverable(aNested, "other/summary.csv"));
+    }
+
+    @Test
+    void substringSimilarityRejectedByExactDeliverableMatching() throws IOException {
+        TaskBrief brief = TaskBrief.of("Generate audit", List.of("report.pdf"));
+        AgentSpec spec = new AgentSpec("audit-agent", "Generate report.pdf",
+                Set.of("createReport"), limits, (r, a) -> CompletionCheck.Result.satisfied());
+
+        // Tool creates a file with substring match: "my-report.pdf.bak"
+        Tool createReportTool = new Tool() {
+            @Override
+            public ToolDefinition definition() {
+                return new ToolDefinition("createReport", "Create report", "{\"type\":\"object\"}");
+            }
+            @Override
+            public ToolOutcome execute(String argumentsJson, ToolContext context) {
+                try {
+                    Path file = context.workspace().outputRoot().resolve("my-report.pdf.bak");
+                    Files.writeString(file, "Some backup content");
+                    context.artifactSink().accept(new Artifact("backup_art", file, "digest_bak", List.of(), context.resources().goalVersion()));
+                    return new ToolOutcome.Success("{\"ok\":true}");
+                } catch (Exception e) {
+                    return new ToolOutcome.Failure("IO_ERROR", e.getMessage(), false);
+                }
+            }
+        };
+
+        ToolCatalog catalog = new ToolCatalog(List.of(createReportTool));
+        DefaultAgentRunner runner = new DefaultAgentRunner((i, g, d) -> session, catalog, events::add);
+
+        // Turn 1: create backup file and claim done
+        session.queue(calls(new ToolCall("call-1", "createReport", "{}")));
+        session.queue(text("Done audit"));
+        // Turn 2: still incomplete after repair attempt
+        session.queue(text("Still done"));
+
+        RunRequest request = new RunRequest("Generate audit", workspace, brief);
+        RunResult result = runner.run(spec, request);
+
+        assertEquals(RunStatus.STOPPED, result.snapshot().status());
+        assertEquals("INCOMPLETE_DELIVERABLE", result.stopReason());
+        assertTrue(session.feedback.get(0).contains("MISSING_DELIVERABLE"));
+        assertTrue(session.feedback.get(0).contains("report.pdf"));
+    }
+
+    @Test
+    void emptyDeliverableFileRejectedWithClearFeedback() throws IOException {
+        TaskBrief brief = TaskBrief.of("Generate empty report", List.of("report.pdf"));
+        AgentSpec spec = new AgentSpec("empty-agent", "Generate empty",
+                Set.of("createReport"), limits, (r, a) -> CompletionCheck.Result.satisfied());
+
+        // Tool creates a 0-byte file
+        Tool createReportTool = new Tool() {
+            @Override
+            public ToolDefinition definition() {
+                return new ToolDefinition("createReport", "Create report", "{\"type\":\"object\"}");
+            }
+            @Override
+            public ToolOutcome execute(String argumentsJson, ToolContext context) {
+                try {
+                    Path file = context.workspace().outputRoot().resolve("report.pdf");
+                    Files.write(file, new byte[0]); // 0 bytes!
+                    context.artifactSink().accept(new Artifact("art_empty", file, "digest_empty", List.of(), context.resources().goalVersion()));
+                    return new ToolOutcome.Success("{\"ok\":true}");
+                } catch (Exception e) {
+                    return new ToolOutcome.Failure("IO_ERROR", e.getMessage(), false);
+                }
+            }
+        };
+
+        ToolCatalog catalog = new ToolCatalog(List.of(createReportTool));
+        DefaultAgentRunner runner = new DefaultAgentRunner((i, g, d) -> session, catalog, events::add);
+
+        // Turn 1: generate 0-byte file
+        session.queue(calls(new ToolCall("call-1", "createReport", "{}")));
+        session.queue(text("Done!"));
+        // Turn 2: still not writing content
+        session.queue(text("Done again!"));
+
+        RunRequest request = new RunRequest("Generate empty report", workspace, brief);
+        RunResult result = runner.run(spec, request);
+
+        assertEquals(RunStatus.STOPPED, result.snapshot().status());
+        assertEquals("INCOMPLETE_DELIVERABLE", result.stopReason());
+        assertTrue(session.feedback.get(0).contains("EMPTY_DELIVERABLE"));
+        assertTrue(session.feedback.get(0).contains("0 bytes"));
+    }
+
     private static final class DummyTool implements Tool {
         private final String name;
         DummyTool(String name) { this.name = name; }

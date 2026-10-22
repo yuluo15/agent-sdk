@@ -104,7 +104,14 @@ public final class McpToolAdapter implements Tool {
         } catch (com.agent.agentcorelab.tool.ActiveTimeExceededException | java.util.concurrent.CancellationException ex) {
             throw ex;
         } catch (Exception ex) {
-            return new ToolOutcome.Failure("MCP_EXECUTION_FAILED", "Failed executing MCP tool [" + mcpToolName + "]: " + ex.getMessage(), true);
+            String errorDetail = ex.getMessage() != null && !ex.getMessage().isBlank()
+                    ? ex.getMessage()
+                    : ex.getClass().getSimpleName();
+            return new ToolOutcome.Failure(
+                    "MCP_EXECUTION_FAILED",
+                    "Failed executing MCP tool [" + mcpToolName + "]: " + errorDetail,
+                    false
+            );
         }
     }
 

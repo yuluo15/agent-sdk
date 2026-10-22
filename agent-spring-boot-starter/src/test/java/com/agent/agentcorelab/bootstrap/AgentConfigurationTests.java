@@ -78,11 +78,21 @@ class AgentConfigurationTests {
                 });
     }
 
+    @Test
+    void modelRetriesCanBeConfigured() {
+        context.withPropertyValues("agent.limits.max-model-retries=3")
+                .run(application -> {
+                    assertNull(application.getStartupFailure());
+                    assertEquals(3, application.getBean(AgentProperties.class).limits().maxModelRetries());
+                });
+    }
+
     @ParameterizedTest
     @ValueSource(strings = {
             "max-model-requests=0", "max-tool-calls=-1", "model-timeout=0s", "active-timeout=-1s",
             "max-context-tokens=0", "output-token-reserve=0", "output-token-reserve=32768",
-            "max-repeated-tool-calls=1", "max-consecutive-tool-errors=0", "max-tool-result-bytes=255"
+            "max-repeated-tool-calls=1", "max-consecutive-tool-errors=0", "max-tool-result-bytes=255",
+            "max-model-retries=-1"
     })
     void invalidLimitsFailInsteadOfBeingRepaired(String invalidLimit) {
         context.withPropertyValues("agent.limits." + invalidLimit).run(application -> {

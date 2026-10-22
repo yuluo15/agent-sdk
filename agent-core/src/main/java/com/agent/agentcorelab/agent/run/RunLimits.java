@@ -12,10 +12,11 @@ public record RunLimits(
         int maxRepeatedToolCalls,
         int maxConsecutiveToolErrors,
         int maxToolResultBytes,
-        Duration waitingTimeout
+        Duration waitingTimeout,
+        int maxModelRetries
 ) {
     public RunLimits(int maxModelRequests, int maxToolCalls, Duration modelTimeout, Duration activeTimeout) {
-        this(maxModelRequests, maxToolCalls, modelTimeout, activeTimeout, 32768, 4096, 3, 3, 16384, Duration.ofMinutes(15));
+        this(maxModelRequests, maxToolCalls, modelTimeout, activeTimeout, 32768, 4096, 3, 3, 16384, Duration.ofMinutes(15), 1);
     }
 
     public RunLimits(
@@ -31,13 +32,31 @@ public record RunLimits(
     ) {
         this(maxModelRequests, maxToolCalls, modelTimeout, activeTimeout,
                 maxContextTokens, outputTokenReserve, maxRepeatedToolCalls,
-                maxConsecutiveToolErrors, maxToolResultBytes, Duration.ofMinutes(15));
+                maxConsecutiveToolErrors, maxToolResultBytes, Duration.ofMinutes(15), 1);
+    }
+
+    public RunLimits(
+            int maxModelRequests,
+            int maxToolCalls,
+            Duration modelTimeout,
+            Duration activeTimeout,
+            int maxContextTokens,
+            int outputTokenReserve,
+            int maxRepeatedToolCalls,
+            int maxConsecutiveToolErrors,
+            int maxToolResultBytes,
+            Duration waitingTimeout
+    ) {
+        this(maxModelRequests, maxToolCalls, modelTimeout, activeTimeout,
+                maxContextTokens, outputTokenReserve, maxRepeatedToolCalls,
+                maxConsecutiveToolErrors, maxToolResultBytes, waitingTimeout, 1);
     }
 
     public RunLimits {
         if (maxModelRequests <= 0 || maxToolCalls <= 0 || maxContextTokens <= 0
                 || outputTokenReserve <= 0 || outputTokenReserve >= maxContextTokens
-                || maxRepeatedToolCalls < 2 || maxConsecutiveToolErrors <= 0 || maxToolResultBytes < 256) {
+                || maxRepeatedToolCalls < 2 || maxConsecutiveToolErrors <= 0 || maxToolResultBytes < 256
+                || maxModelRetries < 0) {
             throw new IllegalArgumentException("Request, context and tool limits must be valid positive values");
         }
         if (modelTimeout == null || modelTimeout.isNegative() || modelTimeout.isZero()

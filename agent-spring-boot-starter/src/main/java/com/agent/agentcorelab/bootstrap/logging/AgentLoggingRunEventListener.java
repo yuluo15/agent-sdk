@@ -87,6 +87,13 @@ public class AgentLoggingRunEventListener implements RunEventListener {
                             runId, agentId, requestNum, modelMillis);
                 }
             }
+            case MODEL_RETRY -> {
+                int attempt = details.path("attempt").asInt(1);
+                long requestNum = details.path("request").asLong(1);
+                String error = details.path("error").asText("");
+                log.warn("[runId={}] [agent={}] [MODEL_TRANSIENT_RETRY] Model request #{} attempt #{} encountered transient error: {}. Retrying...",
+                        runId, agentId, requestNum, attempt, truncate(error, properties.getMaxTextLength()));
+            }
             case TOOL_STARTED -> {
                 String tool = details.path("tool").asText("unknown");
                 String callId = details.path("callId").asText("unknown");
@@ -143,6 +150,14 @@ public class AgentLoggingRunEventListener implements RunEventListener {
                 String reason = details.path("reason").asText("");
                 log.info("[runId={}] [agent={}] Task plan revised (revision={}, reason={})",
                         runId, agentId, revision, truncate(reason, properties.getMaxTextLength()));
+            }
+            case COMPACTION_TRIGGERED -> {
+                long tokensAfter = details.path("tokensAfter").asLong(0);
+                log.info("[runId={}] [agent={}] Context compaction triggered (tokensAfter={})", runId, agentId, tokensAfter);
+            }
+            case DELIVERABLE_RETRY -> {
+                String feedback = truncate(details.path("feedback").asText(""), properties.getMaxTextLength());
+                log.warn("[runId={}] [agent={}] Incomplete deliverable detected. Retrying with feedback: '{}'", runId, agentId, feedback);
             }
             case RUN_FINISHED -> {
                 String status = details.path("status").asText("UNKNOWN");

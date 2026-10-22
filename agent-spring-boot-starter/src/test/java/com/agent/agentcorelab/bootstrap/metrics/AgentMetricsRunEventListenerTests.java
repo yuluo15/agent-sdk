@@ -139,6 +139,59 @@ class AgentMetricsRunEventListenerTests {
     }
 
     @Test
+    void incrementsModelRetryMetric() {
+        UUID runId = UUID.randomUUID();
+        listener.onEvent(new RunEvent(1, runId, Instant.now(), RunEvent.Type.MODEL_RETRY,
+                "{\"agentId\":\"it-triage\",\"request\":1,\"attempt\":1}"));
+
+        Counter retryCounter = registry.find("agent.run.model.retries")
+                .tag("agent_id", "it-triage")
+                .counter();
+        assertNotNull(retryCounter);
+        assertEquals(1.0, retryCounter.count());
+    }
+
+    @Test
+    void incrementsCompactionAndDeliverableRetryMetricsWithoutPollutingActiveRuns() {
+        UUID runId = UUID.randomUUID();
+        // Emulate run start: activeRuns should become 1
+        listener.onEvent(new RunEvent(1, runId, Instant.now(), RunEvent.Type.RUN_STARTED,
+                "{\"agentId\":\"it-triage\",\"goal\":\"fix incident\"}"));
+        io.micrometer.core.instrument.Gauge activeRuns = registry.find("agent.runs.active").gauge();
+        assertNotNull(activeRuns);
+        assertEquals(1.0, activeRuns.value());
+        assertEquals(1, listener.activeRuns());
+
+        // Compaction triggered: should increment compaction counter, but NOT activeRuns
+        listener.onEvent(new RunEvent(2, runId, Instant.now(), RunEvent.Type.COMPACTION_TRIGGERED,
+                "{\"agentId\":\"it-triage\",\"compacted\":true,\"tokensAfter\":3000}"));
+        Counter compactionCounter = registry.find("agent.run.context.compactions")
+                .tag("agent_id", "it-triage")
+                .counter();
+        assertNotNull(compactionCounter);
+        assertEquals(1.0, compactionCounter.count());
+        assertEquals(1.0, activeRuns.value(), "activeRuns must not increase on compaction");
+        assertEquals(1, listener.activeRuns());
+
+        // Deliverable retry: should increment deliverable retry counter, but NOT activeRuns
+        listener.onEvent(new RunEvent(3, runId, Instant.now(), RunEvent.Type.DELIVERABLE_RETRY,
+                "{\"agentId\":\"it-triage\",\"completionRepair\":true,\"feedback\":\"Missing artifact\"}"));
+        Counter retryCounter = registry.find("agent.run.deliverable.retries")
+                .tag("agent_id", "it-triage")
+                .counter();
+        assertNotNull(retryCounter);
+        assertEquals(1.0, retryCounter.count());
+        assertEquals(1.0, activeRuns.value(), "activeRuns must not increase on deliverable retry");
+        assertEquals(1, listener.activeRuns());
+
+        // Run completed: activeRuns should return to 0
+        listener.onEvent(new RunEvent(4, runId, Instant.now(), RunEvent.Type.RUN_FINISHED,
+                "{\"agentId\":\"it-triage\",\"status\":\"COMPLETED\",\"reason\":\"DONE\",\"durationMillis\":500,\"metrics\":{\"modelRequests\":2,\"toolCalls\":1}}"));
+        assertEquals(0.0, activeRuns.value());
+        assertEquals(0, listener.activeRuns());
+    }
+
+    @Test
     void recordsApprovalAndClarificationMetrics() {
         UUID runId = UUID.randomUUID();
         listener.onEvent(new RunEvent(1, runId, Instant.now(), RunEvent.Type.APPROVAL_REQUESTED,

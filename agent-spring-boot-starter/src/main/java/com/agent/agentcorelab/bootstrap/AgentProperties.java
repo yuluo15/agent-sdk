@@ -19,7 +19,8 @@ public final class AgentProperties {
     public AgentProperties(@DefaultValue LimitsSettings limits, @DefaultValue WorkspaceSettings workspace) {
         this(new RunLimits(limits.maxModelRequests(), limits.maxToolCalls(), limits.modelTimeout(),
                         limits.activeTimeout(), limits.maxContextTokens(), limits.outputTokenReserve(),
-                        limits.maxRepeatedToolCalls(), limits.maxConsecutiveToolErrors(), limits.maxToolResultBytes()),
+                        limits.maxRepeatedToolCalls(), limits.maxConsecutiveToolErrors(), limits.maxToolResultBytes(),
+                        limits.waitingTimeout(), limits.maxModelRetries()),
                 new Workspace(workspace.inputRoot(), workspace.outputRoot(), workspace.traceRoot(),
                         workspace.createInputIfMissing()));
     }
@@ -46,7 +47,9 @@ public final class AgentProperties {
             @DefaultValue("4096") int outputTokenReserve,
             @DefaultValue("3") int maxRepeatedToolCalls,
             @DefaultValue("3") int maxConsecutiveToolErrors,
-            @DefaultValue("16384") int maxToolResultBytes
+            @DefaultValue("16384") int maxToolResultBytes,
+            @DefaultValue("15m") Duration waitingTimeout,
+            @DefaultValue("1") int maxModelRetries
     ) {
     }
 
