@@ -1,5 +1,7 @@
 package com.agent.agentcorelab.agent;
 
+import com.agent.agentcorelab.agent.approval.ApprovalBinding;
+import com.agent.agentcorelab.agent.approval.ApprovalException;
 import com.agent.agentcorelab.agent.context.TrustedContext;
 import com.agent.agentcorelab.agent.plan.TaskBrief;
 import com.agent.agentcorelab.agent.plan.TaskPlan;
@@ -424,6 +426,11 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
 
     @Override
     public RunResult approve(UUID runId, String approvalId, Consumer<RunStreamChunk> listener) {
+        return approve(runId, approvalId, (TrustedContext) null, listener);
+    }
+
+    @Override
+    public RunResult approve(UUID runId, String approvalId, TrustedContext approverContext, Consumer<RunStreamChunk> listener) {
         Objects.requireNonNull(runId, "runId");
         Objects.requireNonNull(approvalId, "approvalId");
         acquire();
@@ -437,15 +444,21 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
                 throw new IllegalStateException("Only the pending approval of the active task can be approved");
             }
             if (state.pendingApproval == null || !approvalId.equals(state.pendingApproval.approvalId())) {
-                throw new IllegalArgumentException("Approval ID mismatch or expired: " + approvalId);
+                throw new ApprovalException("APPROVAL_ID_MISMATCH", "Approval ID mismatch or expired: " + approvalId);
             }
-            return doApprove(state, listener);
+            if (state.pendingBinding != null) {
+                state.pendingBinding.validateAndConsume(
+                        state.pendingHighRiskCall != null ? state.pendingHighRiskCall.argumentsJson() : "{}",
+                        approverContext
+                );
+            }
+            return doApprove(state, approverContext, listener);
         } finally {
             unlockOwner();
         }
     }
 
-    private RunResult doApprove(State state, Consumer<RunStreamChunk> listener) {
+    private RunResult doApprove(State state, TrustedContext approverContext, Consumer<RunStreamChunk> listener) {
         return drive(state, () -> {
             ToolCall call = state.pendingHighRiskCall;
             List<ToolCall> calls = state.pendingHighRiskCalls;
@@ -455,15 +468,20 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
             exitWaiting(state);
             state.status = RunStatus.RUNNING;
             state.pendingApproval = null;
+            state.pendingBinding = null;
             state.pendingHighRiskCall = null;
             state.pendingHighRiskCalls = null;
 
-            event(state, RunEvent.Type.APPROVAL_RESOLVED, Map.of(
-                    "approvalId", approvalId,
-                    "callId", call.callId(),
-                    "tool", call.name(),
-                    "decision", "APPROVED"
-            ));
+            Map<String, Object> eventData = new LinkedHashMap<>();
+            eventData.put("approvalId", approvalId);
+            eventData.put("callId", call.callId());
+            eventData.put("tool", call.name());
+            eventData.put("decision", "APPROVED");
+            if (approverContext != null) {
+                eventData.put("approverPrincipal", approverContext.userPrincipal());
+                eventData.put("approverTenantId", approverContext.tenantId());
+            }
+            event(state, RunEvent.Type.APPROVAL_RESOLVED, eventData);
 
             event(state, RunEvent.Type.TOOL_STARTED, Map.of("callId", call.callId(), "tool", call.name(),
                     "argumentsSha256", digest(call.argumentsJson())));
@@ -502,6 +520,11 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
 
     @Override
     public RunResult reject(UUID runId, String approvalId, String reason, Consumer<RunStreamChunk> listener) {
+        return reject(runId, approvalId, reason, (TrustedContext) null, listener);
+    }
+
+    @Override
+    public RunResult reject(UUID runId, String approvalId, String reason, TrustedContext approverContext, Consumer<RunStreamChunk> listener) {
         Objects.requireNonNull(runId, "runId");
         Objects.requireNonNull(approvalId, "approvalId");
         String rejectionReason = reason != null && !reason.isBlank() ? reason : "Action rejected by user";
@@ -516,15 +539,18 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
                 throw new IllegalStateException("Only the pending approval of the active task can be rejected");
             }
             if (state.pendingApproval == null || !approvalId.equals(state.pendingApproval.approvalId())) {
-                throw new IllegalArgumentException("Approval ID mismatch or expired: " + approvalId);
+                throw new ApprovalException("APPROVAL_ID_MISMATCH", "Approval ID mismatch or expired: " + approvalId);
             }
-            return doReject(state, rejectionReason, listener);
+            if (state.pendingBinding != null) {
+                state.pendingBinding.validateRejectAndConsume(approverContext);
+            }
+            return doReject(state, rejectionReason, approverContext, listener);
         } finally {
             unlockOwner();
         }
     }
 
-    private RunResult doReject(State state, String rejectionReason, Consumer<RunStreamChunk> listener) {
+    private RunResult doReject(State state, String rejectionReason, TrustedContext approverContext, Consumer<RunStreamChunk> listener) {
         return drive(state, () -> {
             ToolCall call = state.pendingHighRiskCall;
             List<ToolCall> calls = state.pendingHighRiskCalls;
@@ -534,16 +560,21 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
             exitWaiting(state);
             state.status = RunStatus.RUNNING;
             state.pendingApproval = null;
+            state.pendingBinding = null;
             state.pendingHighRiskCall = null;
             state.pendingHighRiskCalls = null;
 
-            event(state, RunEvent.Type.APPROVAL_RESOLVED, Map.of(
-                    "approvalId", approvalId,
-                    "callId", call.callId(),
-                    "tool", call.name(),
-                    "decision", "REJECTED",
-                    "reason", rejectionReason
-            ));
+            Map<String, Object> eventData = new LinkedHashMap<>();
+            eventData.put("approvalId", approvalId);
+            eventData.put("callId", call.callId());
+            eventData.put("tool", call.name());
+            eventData.put("decision", "REJECTED");
+            eventData.put("reason", rejectionReason);
+            if (approverContext != null) {
+                eventData.put("approverPrincipal", approverContext.userPrincipal());
+                eventData.put("approverTenantId", approverContext.tenantId());
+            }
+            event(state, RunEvent.Type.APPROVAL_RESOLVED, eventData);
 
             ToolOutcome outcome = new ToolOutcome.Failure("ACTION_REJECTED",
                     "User rejected action '" + call.name() + "': " + rejectionReason, false);
@@ -610,6 +641,7 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
                 int index = state.pendingHighRiskIndex;
                 String approvalId = state.pendingApproval != null ? state.pendingApproval.approvalId() : "";
                 state.pendingApproval = null;
+                state.pendingBinding = null;
                 state.pendingHighRiskCall = null;
                 state.pendingHighRiskCalls = null;
                 event(state, RunEvent.Type.APPROVAL_RESOLVED, Map.of(
@@ -638,6 +670,7 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
                 }
             } else if (state.pendingApproval != null) {
                 state.pendingApproval = null;
+                state.pendingBinding = null;
             }
             state.taskBrief = revisedBrief;
             state.currentGoal = revisedBrief.objective();
@@ -986,11 +1019,23 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
                             reqApproval.policyVersion(),
                             reqApproval.requiredRole()
                     );
+                    ApprovalBinding binding = new ApprovalBinding(
+                            UUID.fromString(approvalId),
+                            trustedCtx.tenantId(),
+                            trustedCtx.userPrincipal(),
+                            reqApproval.requiredRole(),
+                            call.name(),
+                            call.callId(),
+                            ApprovalBinding.computeArgumentsDigest(call.argumentsJson()),
+                            reqApproval.policyVersion(),
+                            Instant.now().plus(ApprovalBinding.DEFAULT_TTL)
+                    );
                     synchronized (state) {
                         if (controlledStop(state)) {
                             return;
                         }
                         state.pendingApproval = req;
+                        state.pendingBinding = binding;
                         state.pendingHighRiskCall = call;
                         state.pendingHighRiskCalls = calls;
                         state.pendingHighRiskIndex = index;
@@ -999,7 +1044,7 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
                                 "approvalId", approvalId,
                                 "callId", call.callId(),
                                 "tool", call.name(),
-                                "argumentsSha256", digest(call.argumentsJson()),
+                                "argumentsSha256", binding.argumentsSha256(),
                                 "policyVersion", reqApproval.policyVersion(),
                                 "requiredRole", reqApproval.requiredRole()
                         ));
@@ -1354,6 +1399,7 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
             state.pending = null;
             state.pendingCall = null;
             state.pendingApproval = null;
+            state.pendingBinding = null;
             state.pendingHighRiskCall = null;
             if (state.resources != null) {
                 state.resources.cleanupTempFiles();
@@ -1399,6 +1445,7 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
         state.pending = null;
         state.pendingCall = null;
         state.pendingApproval = null;
+        state.pendingBinding = null;
         state.pendingHighRiskCall = null;
         state.pendingHighRiskCalls = null;
         publish(state);
@@ -1443,7 +1490,8 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
                 Optional.ofNullable(state.pending),
                 Optional.ofNullable(state.taskBrief),
                 Optional.ofNullable(state.taskPlan),
-                Optional.ofNullable(state.pendingApproval));
+                Optional.ofNullable(state.pendingApproval),
+                Optional.ofNullable(state.pendingBinding));
         return state.snapshot;
     }
 
@@ -1612,6 +1660,7 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
         private PendingQuestion lastPendingQuestion;
         private ToolCall pendingCall;
         private ApprovalRequest pendingApproval;
+        private ApprovalBinding pendingBinding;
         private ToolCall pendingHighRiskCall;
         private List<ToolCall> pendingHighRiskCalls;
         private int pendingHighRiskIndex;

@@ -85,7 +85,7 @@ flowchart TD
 | **03** | **P1** | **工具标准治理语义扩展** | `ToolSemantics.java`<br>`ToolDefinition.java` | **✅ 已完成** | 引入 `SemanticHint` 三态（`YES/NO/UNKNOWN`）声明 `readOnly`、`destructive`、`idempotent`、`openWorld`；`@AgentTool` 支持声明治理语义；宿主支持对外部 MCP 工具强制覆盖防篡改；318 个用例 100% 通过。 |
 | **04** | **P1** | **可信上下文（TrustedContext）注入** | `TrustedContext.java`<br>`RunRequest.java`<br>`ToolContext.java` | **✅ 已完成** | 宿主安全注入租户 `tenantId`、主体 `userPrincipal`、权限集 `scopes` 与 `traceId`，只读不可变设计；模型与参数不可伪造；`@AgentTool` 支持隐式注入；323 个用例 100% 通过。 |
 | **05** | **P1** | **双阶段策略执行引擎（ToolPolicy SPI）** | `ToolPolicy.java`<br>`DefaultAgentRunner.java` | **✅ 已完成** | 执行前 `beforeExecute`（`ALLOW / DENY / REQUIRE_APPROVAL`）；执行后出域保护 `afterExecute`（`ALLOW_OUTPUT / REDACT / DENY_OUTPUT`）；单测覆盖策略放行、拦截阻断、挂起审批与出域敏感信息脱敏全场景；347 个用例 100% 通过。 |
-| **06** | **P1** | **防篡改与防重放审批绑定** | `ApprovalBinding.java`<br>`ApprovalRequest.java` | **⏳ 待开始** | 强绑定申请人、审批角色、租户、工具名/callId、参数 SHA-256 哈希、TTL 与单次使用令牌；执行前二次比对参数与权限。 |
+| **06** | **P1** | **防篡改与防重放审批绑定** | `ApprovalBinding.java`<br>`DefaultAgentRunner.java`<br>`ApprovalException.java` | **✅ 已完成** | 强绑定申请人、审批角色、租户、工具名/callId、参数规范化 SHA-256 哈希、TTL 与原子 CAS 单次消费标志；全面覆盖参数篡改拦截、重放拦截、超时拦截、跨租户拦截与越权审批人拦截；323 个用例 100% 通过。 |
 | **07** | **P1** | **只追加企业审计日志契约** | `AuditTrailSpi.java`<br>`DefaultAgentRunner.java` | **⏳ 待开始** | 规范只追加（Append-Only）审计事件契约；记录治理决策链路；不写完整敏感 Prompt；明确存储防篡改由外接系统承担。 |
 | **--** | **Gate A**| **合成高风险攻防验证（L1 评定）** | `SyntheticGovernanceTests.java` | **⏳ 待开始** | 针对“酒店退改签与违约金减免”沙箱场景，验证 8 项安全红线均为 0 违规，证明最小治理闭环成立。 |
 | **08** | **P2** | **静态挂起点持久化（Checkpoint SPI）** | `CheckpointSpi.java`<br>`DefaultAgentRunner.java` | **⏳ 待开始** | 严格收缩边界：仅支持 `WAITING_INPUT` 与 `WAITING_APPROVAL` 两类静止状态；提供轻量快照存储与恢复；支持乐观锁版本控制。 |
@@ -178,7 +178,8 @@ flowchart TD
 * **验收标准**：单测覆盖策略放行、拦截阻断、触发审批与输出脱敏全场景。
 
 #### 任务 06：防篡改与防重放审批绑定（ApprovalBinding）
-* **涉及代码**：`com.agent.agentcorelab.agent.approval.ApprovalBinding`、`DefaultAgentRunner`
+* **状态**：`✅ 已完成`
+* **涉及代码**：`com.agent.agentcorelab.agent.approval.ApprovalBinding`、`ApprovalException`、`DefaultAgentRunner`、`AgentRunner`、`RunSnapshot`
 * **现状缺陷**：审批请求仅依赖随机 UUID，未绑定调用主体、参数哈希与生效时效，极易受到审批重放与参数中途篡改攻击。
 * **实施方案**：
   1. 引入严谨的审批绑定实体：

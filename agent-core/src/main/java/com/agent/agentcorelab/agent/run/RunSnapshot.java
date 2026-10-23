@@ -1,5 +1,6 @@
 package com.agent.agentcorelab.agent.run;
 
+import com.agent.agentcorelab.agent.approval.ApprovalBinding;
 import com.agent.agentcorelab.agent.plan.TaskBrief;
 import com.agent.agentcorelab.agent.plan.TaskPlan;
 import com.agent.agentcorelab.tool.ToolCall;
@@ -21,7 +22,8 @@ public record RunSnapshot(
         Optional<PendingQuestion> pendingQuestion,
         Optional<TaskBrief> taskBrief,
         Optional<TaskPlan> taskPlan,
-        Optional<ApprovalRequest> pendingApproval
+        Optional<ApprovalRequest> pendingApproval,
+        Optional<ApprovalBinding> approvalBinding
 ) {
     public RunSnapshot(
             UUID runId,
@@ -34,7 +36,7 @@ public record RunSnapshot(
             Optional<PendingQuestion> pendingQuestion
     ) {
         this(runId, agentId, goal, status, observations, artifacts, metrics, pendingQuestion,
-                Optional.empty(), Optional.empty(), Optional.empty());
+                Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty());
     }
 
     public RunSnapshot(
@@ -50,7 +52,24 @@ public record RunSnapshot(
             Optional<TaskPlan> taskPlan
     ) {
         this(runId, agentId, goal, status, observations, artifacts, metrics, pendingQuestion,
-                taskBrief, taskPlan, Optional.empty());
+                taskBrief, taskPlan, Optional.empty(), Optional.empty());
+    }
+
+    public RunSnapshot(
+            UUID runId,
+            String agentId,
+            String goal,
+            RunStatus status,
+            List<Observation> observations,
+            List<Artifact> artifacts,
+            RunMetrics metrics,
+            Optional<PendingQuestion> pendingQuestion,
+            Optional<TaskBrief> taskBrief,
+            Optional<TaskPlan> taskPlan,
+            Optional<ApprovalRequest> pendingApproval
+    ) {
+        this(runId, agentId, goal, status, observations, artifacts, metrics, pendingQuestion,
+                taskBrief, taskPlan, pendingApproval, Optional.empty());
     }
 
     public RunSnapshot {
@@ -59,6 +78,7 @@ public record RunSnapshot(
         taskBrief = taskBrief != null ? taskBrief : Optional.empty();
         taskPlan = taskPlan != null ? taskPlan : Optional.empty();
         pendingApproval = pendingApproval != null ? pendingApproval : Optional.empty();
+        approvalBinding = approvalBinding != null ? approvalBinding : Optional.empty();
     }
 
     public record Observation(ToolCall call, ToolOutcome outcome) {

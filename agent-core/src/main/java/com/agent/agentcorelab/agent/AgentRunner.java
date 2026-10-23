@@ -1,5 +1,6 @@
 package com.agent.agentcorelab.agent;
 
+import com.agent.agentcorelab.agent.context.TrustedContext;
 import com.agent.agentcorelab.agent.plan.TaskBrief;
 import com.agent.agentcorelab.agent.policy.ExecutionPolicy;
 import com.agent.agentcorelab.agent.run.RunRequest;
@@ -86,10 +87,18 @@ public interface AgentRunner {
      * Approves a pending high-risk tool call, resuming execution to execute the tool and continue the loop.
      */
     default RunResult approve(UUID runId, String approvalId) {
-        return approve(runId, approvalId, null);
+        return approve(runId, approvalId, (TrustedContext) null, null);
     }
 
     default RunResult approve(UUID runId, String approvalId, Consumer<RunStreamChunk> listener) {
+        return approve(runId, approvalId, (TrustedContext) null, listener);
+    }
+
+    default RunResult approve(UUID runId, String approvalId, TrustedContext approverContext) {
+        return approve(runId, approvalId, approverContext, null);
+    }
+
+    default RunResult approve(UUID runId, String approvalId, TrustedContext approverContext, Consumer<RunStreamChunk> listener) {
         throw new UnsupportedOperationException("Human-in-the-loop approval is not supported by this runner");
     }
 
@@ -97,10 +106,18 @@ public interface AgentRunner {
      * Rejects a pending high-risk tool call, feeding the user rejection reason back to the model as an error.
      */
     default RunResult reject(UUID runId, String approvalId, String reason) {
-        return reject(runId, approvalId, reason, null);
+        return reject(runId, approvalId, reason, (TrustedContext) null, null);
     }
 
     default RunResult reject(UUID runId, String approvalId, String reason, Consumer<RunStreamChunk> listener) {
+        return reject(runId, approvalId, reason, (TrustedContext) null, listener);
+    }
+
+    default RunResult reject(UUID runId, String approvalId, String reason, TrustedContext approverContext) {
+        return reject(runId, approvalId, reason, approverContext, null);
+    }
+
+    default RunResult reject(UUID runId, String approvalId, String reason, TrustedContext approverContext, Consumer<RunStreamChunk> listener) {
         throw new UnsupportedOperationException("Human-in-the-loop rejection is not supported by this runner");
     }
 

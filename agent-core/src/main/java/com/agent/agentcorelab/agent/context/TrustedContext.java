@@ -138,6 +138,15 @@ public record TrustedContext(
             return this;
         }
 
+        public Builder scope(String scope) {
+            if (scope != null && !scope.isBlank()) {
+                var newScopes = new java.util.HashSet<>(this.scopes);
+                newScopes.add(scope.trim());
+                this.scopes = java.util.Collections.unmodifiableSet(newScopes);
+            }
+            return this;
+        }
+
         public Builder traceId(String traceId) {
             this.traceId = traceId;
             return this;
