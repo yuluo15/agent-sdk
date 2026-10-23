@@ -62,7 +62,7 @@ flowchart TD
 
     subgraph P3["P3：场景级生态与开发体验扩展 (按需演进)"]
         T09["任务 09：场景级候选工具发现与最小权限组装 (重写原11)"]
-        T10["任务 10：实用组合校验器与计划状态判定 (TaskPlanSatisfied)"]
+        T10["任务 10：契约驱动与逻辑交付物验收器 (ContractDrivenCompletionCheck)"]
     end
 
     P0 --> P1
@@ -83,14 +83,14 @@ flowchart TD
 | **02** | **P0** | **建立本地与 CI 构建门禁** | `.github/workflows/ci.yml`<br>`verify.ps1` | **✅ 已完成** | 配置 GitHub Actions 工作流与本地一键预检，锁定 JDK 21 编译与 100% 测试通过门禁，杜绝凭证泄漏。 |
 | **--** | **已归档** | **P0/P1/P2 历史基础加固** | `agent-core`<br>`agent-mcp-adapter` | **✅ 已完成** | 涵盖原任务 01–10（MCP 弹性容错、Token 加权、模型有限重试、事件语义、产物校验、SessionRunnerManager、waitingTimeout、目标修订原子重建、官方 MCP Java SDK 0.17.1、SKILL.md 标准解析）。 |
 | **03** | **P1** | **工具标准治理语义扩展** | `ToolSemantics.java`<br>`ToolDefinition.java` | **✅ 已完成** | 引入 `SemanticHint` 三态（`YES/NO/UNKNOWN`）声明 `readOnly`、`destructive`、`idempotent`、`openWorld`；`@AgentTool` 支持声明治理语义；宿主支持对外部 MCP 工具强制覆盖防篡改；318 个用例 100% 通过。 |
-| **04** | **P1** | **可信上下文（TrustedContext）注入** | `TrustedContext.java`<br>`RunRequest.java`<br>`ToolContext.java` | **⏳ 待开始** | 宿主安全注入租户 `tenantId`、主体 `userPrincipal`、权限集 `scopes` 与 `traceId`，只读载体设计，模型与参数不可伪造。 |
+| **04** | **P1** | **可信上下文（TrustedContext）注入** | `TrustedContext.java`<br>`RunRequest.java`<br>`ToolContext.java` | **✅ 已完成** | 宿主安全注入租户 `tenantId`、主体 `userPrincipal`、权限集 `scopes` 与 `traceId`，只读不可变设计；模型与参数不可伪造；`@AgentTool` 支持隐式注入；323 个用例 100% 通过。 |
 | **05** | **P1** | **双阶段策略执行引擎（ToolPolicy SPI）** | `ToolPolicy.java`<br>`DefaultAgentRunner.java` | **⏳ 待开始** | 执行前 `beforeExecute`（`ALLOW / DENY / REQUIRE_APPROVAL`）；执行后出域保护 `afterExecute`（`ALLOW_OUTPUT / REDACT / DENY_OUTPUT`）。 |
 | **06** | **P1** | **防篡改与防重放审批绑定** | `ApprovalBinding.java`<br>`ApprovalRequest.java` | **⏳ 待开始** | 强绑定申请人、审批角色、租户、工具名/callId、参数 SHA-256 哈希、TTL 与单次使用令牌；执行前二次比对参数与权限。 |
 | **07** | **P1** | **只追加企业审计日志契约** | `AuditTrailSpi.java`<br>`DefaultAgentRunner.java` | **⏳ 待开始** | 规范只追加（Append-Only）审计事件契约；记录治理决策链路；不写完整敏感 Prompt；明确存储防篡改由外接系统承担。 |
 | **--** | **Gate A**| **合成高风险攻防验证（L1 评定）** | `SyntheticGovernanceTests.java` | **⏳ 待开始** | 针对“酒店退改签与违约金减免”沙箱场景，验证 8 项安全红线均为 0 违规，证明最小治理闭环成立。 |
 | **08** | **P2** | **静态挂起点持久化（Checkpoint SPI）** | `CheckpointSpi.java`<br>`DefaultAgentRunner.java` | **⏳ 待开始** | 严格收缩边界：仅支持 `WAITING_INPUT` 与 `WAITING_APPROVAL` 两类静止状态；提供轻量快照存储与恢复；支持乐观锁版本控制。 |
 | **09** | **P3** | **场景级候选工具发现与最小权限组装** | `McpAutoConfiguration.java`<br>`ToolCatalog.java` | **⏳ 待开始** | 否决全局 ToolCatalog 倾倒；Spring 只发现候选工具 Bean；每个 `AgentSpec` 或业务场景根据白名单与租户上下文独立组装安全目录。 |
-| **10** | **P3** | **实用组合校验器与计划状态判定** | `CompositeCompletionCheck.java`<br>`TaskPlan.java` | **⏳ 待开始** | 提供轻量无依赖的组合完成度校验器；新增 `TaskPlan.isSatisfied()` 适配允许合理 `DROPPED` 的业务流程。 |
+| **10** | **P3** | **契约驱动与逻辑交付物验收器** | `ContractDrivenCompletionCheck.java`<br>`CompletionRequirements.java`<br>`TaskPlan.java` | **⏳ 待开始** | 落实五级权责分离：可组合 `CompletionProfile`、轻量按次契约 `CompletionRequirements`（角色履约非写死文件名、`[E1]`证据引用、动作回执）、`TaskPlan.isSatisfied()` 计划自洽校验、可选 `CompletionJudge` 语义质检与有界 Repair。 |
 
 ---
 
@@ -144,23 +144,15 @@ flowchart TD
 * **验收结果**：全量测试套件 318 个用例 100% 绿色通过，0 凭证泄漏，覆盖声明、解析、MCP 桥接与宿主强制覆写。
 
 #### 任务 04：可信上下文（TrustedContext）注入
-* **涉及代码**：`com.agent.agentcorelab.agent.context.TrustedContext`、`RunRequest`、`ToolContext`
+* **状态**：`✅ 已完成`
+* **涉及代码**：[`TrustedContext.java`](file:///D:/agent/agent-sdk/agent-core/src/main/java/com/agent/agentcorelab/agent/context/TrustedContext.java)、[`RunRequest.java`](file:///D:/agent/agent-sdk/agent-core/src/main/java/com/agent/agentcorelab/agent/run/RunRequest.java)、[`ToolContext.java`](file:///D:/agent/agent-sdk/agent-core/src/main/java/com/agent/agentcorelab/tool/ToolContext.java)、[`DefaultAgentRunner.java`](file:///D:/agent/agent-sdk/agent-core/src/main/java/com/agent/agentcorelab/agent/DefaultAgentRunner.java)、[`JsonSchemaGenerator.java`](file:///D:/agent/agent-sdk/agent-core/src/main/java/com/agent/agentcorelab/tool/annotation/JsonSchemaGenerator.java)、[`AnnotatedTool.java`](file:///D:/agent/agent-sdk/agent-core/src/main/java/com/agent/agentcorelab/tool/annotation/AnnotatedTool.java)
 * **现状缺陷**：调用上下文缺乏租户隔离与调用主体标识，工具执行无法依据真实的身份边界做权限防范。
-* **实施方案**：
-  1. 定义不可变只读可信上下文实体：
-     ```java
-     public record TrustedContext(
-         String tenantId,
-         String userPrincipal,
-         String agentIdentity,
-         Set<String> scopes,
-         String traceId,
-         String requestId
-     ) {}
-     ```
-  2. 在 `RunRequest` 中引入只读载体，由企业宿主系统直接注入；
-  3. 透传至 `ToolContext`，严禁大模型通过输入参数或 Prompt 修改、伪造上下文中的字段。
-* **验收标准**：单测验证上下文只读不可篡改性及全执行链路透传。
+* **实施方案与交付成果**：
+  1. 定义不可变只读可信上下文实体 `TrustedContext`（`tenantId`, `userPrincipal`, `agentIdentity`, `scopes`, `traceId`, `requestId`），内置范围鉴权（`hasScope`, `hasAnyScope`, `hasAllScopes`）与通配符 `*` 判定，防篡改只读保护；
+  2. 在 `RunRequest` 中引入只读载体，保持既有 10 个历史构造函数 100% 向后兼容；
+  3. 透传至 `ToolContext`，在 `DefaultAgentRunner` 工具调用链中自动透传绑定；
+  4. 声明式注入支持：`@AgentTool` 方法参数支持直接声明 `TrustedContext`，框架自动注入且从 JSON Schema 中剔除，防范大模型与外部 Prompt 参数伪造。
+* **验收结果**：全量测试套件 323 个用例 100% 绿色通过，0 凭证泄漏，通过单测验证上下文只读不可篡改性、参数注入防伪造及全执行链路透传。
 
 #### 任务 05：双阶段策略执行引擎（ToolPolicy SPI）
 * **涉及代码**：`com.agent.agentcorelab.policy.ToolPolicy`、`DefaultAgentRunner`
@@ -271,12 +263,22 @@ flowchart TD
   3. 每个 `AgentSpec` 必须通过显式白名单、分类标签或租户隔离策略，按需装配只属于该 Agent 作用域的轻量安全 `ToolCatalog`。
 * **验收标准**：在同一应用中声明多个 Agent，验证各 Agent 工具互相隔离、互不越权。
 
-#### 任务 10：实用组合校验器与计划状态判定
-* **涉及代码**：`CompositeCompletionCheck.java`、`TaskPlan.java`
-* **实施方案**：
-  1. 提供轻量无三方依赖的 `CompositeCompletionCheck`（支持 AND / OR 逻辑组合）；
-  2. 增强 `TaskPlan.isSatisfied()` 方法：不再僵化要求所有子步骤都必须是 `DONE`，对于因目标动态修订等合理原因标记为 `DROPPED` 的步骤予以认可，避免状态机死锁。
-* **验收标准**：单测覆盖包含废弃步骤的动态规划能够正确判定任务达成。
+#### 任务 10：契约驱动与逻辑交付物履约验收器（ContractDrivenCompletionCheck）
+* **涉及代码**：`com.agent.agentcorelab.agent.check.*`、`ContractDrivenCompletionCheck.java`、`CompletionRequirements.java`、`CompletionProfile.java`、`TaskPlan.java`
+* **现状缺陷**：原验收检查在具体类中硬编码了工具名（如 `executeSql`）、文件名（如 `report.md`）与特定格式标签，导致大模型无法发挥自主规划能力，工具替换或 MCP 接入即引发断言失效；而静态规则又容易导致“有任意文件即假通过”。
+* **实施方案（五级权责分离落地）**：
+  1. **流水线分类（`CompletionProfile`）**：定义可组合枚举集合（`TEXT`, `EVIDENCE`, `ARTIFACT`, `ACTION`），决定本次运行启用哪些质检流水线；
+  2. **轻量按次契约（`CompletionRequirements`）**：
+     - **逻辑交付物（Logical Deliverable）**：以角色（如 `ANALYSIS_REPORT`）而非具体物理文件名（如 `report.md`）作为履约目标，模型自选文件名只要有效履约且通过摘要/所有权校验即通过；
+     - **核心标准（Criteria）**：轻量表达必选业务结论要点；
+     - **零额外网络延迟**：固定 Agent 由宿主注入契约，简单任务默认 `TEXT`，复杂开放任务由主模型在 Turn 1 Planning 中捎带返回，随后冻结契约（模型只能改步骤，不能擅自降及格线）；
+  3. **简标证据引用（`[E1]`）与动作回执**：
+     - 工具调用输出由 SDK 自动附带简单引用编号（`[E1]`, `[E2]`），模型结论引用即可，杜绝复杂的嵌套 JSON UUID 外键图；
+     - 写操作检查带有不可伪造属性的 `ActionReceipt`；
+  4. **执行计划自洽（`TaskPlan.isSatisfied()`）**：仅作为第三层一致性辅助核验，包容因目标动态修订而产生的合理 `DROPPED` 步骤；
+  5. **可选语义质检（`CompletionJudge` SPI）**：默认关闭，按需启用；仅处理无法程序量化的主观文案与语义质量，**绝不可推翻前置的确定性硬约束**；
+  6. **有界且区分副作用的 Repair**：自动修复仅允许针对文本润色、补充只读查询、重写分析报告；**绝对禁止自动重复放行支付/退款等外部写操作**，防范重复扣款。
+* **验收标准**：单测覆盖逻辑产物履约、简单证据引用、计划一致性自洽及有界 Repair 防重复写操作。
 
 ---
 

@@ -1,5 +1,6 @@
 package com.agent.agentcorelab.tool.annotation;
 
+import com.agent.agentcorelab.agent.context.TrustedContext;
 import com.agent.agentcorelab.tool.ToolContext;
 import com.agent.agentcorelab.tool.ToolJson;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -97,7 +98,8 @@ public final class JsonSchemaGenerator {
     }
 
     public static boolean isContextParameter(Parameter parameter) {
-        return ToolContext.class.isAssignableFrom(parameter.getType());
+        return ToolContext.class.isAssignableFrom(parameter.getType())
+                || TrustedContext.class.isAssignableFrom(parameter.getType());
     }
 
     public static String resolveParameterName(Parameter parameter) {

@@ -466,7 +466,8 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
             safeEmit(listener, RunStreamChunk.toolStarted(call.callId(), call.name(), Map.of("callId", call.callId())));
             ToolContext context = new ToolContext(state.id, state.request.workspace(),
                     Instant.now().plus(remaining(state)), state::isCancellationRequested,
-                    artifact -> state.artifacts.add(artifact), state.resources);
+                    artifact -> state.artifacts.add(artifact), state.resources,
+                    state.request.resolvedTrustedContext());
             ToolOutcome outcome;
             long toolStart = nanoTime.getAsLong();
             try {
@@ -985,7 +986,8 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
                 safeEmit(listener, RunStreamChunk.toolStarted(call.callId(), call.name(), Map.of("callId", call.callId())));
                 ToolContext context = new ToolContext(state.id, state.request.workspace(),
                         Instant.now().plus(remaining(state)), state::isCancellationRequested,
-                        artifact -> state.artifacts.add(artifact), state.resources);
+                        artifact -> state.artifacts.add(artifact), state.resources,
+                        state.request.resolvedTrustedContext());
                 long toolStart = nanoTime.getAsLong();
                 try {
                     state.currentToolThread.set(Thread.currentThread());

@@ -1,5 +1,7 @@
 package com.agent.agentcorelab.tool.annotation;
 
+import com.agent.agentcorelab.agent.context.TrustedContext;
+
 import com.agent.agentcorelab.tool.ActiveTimeExceededException;
 import com.agent.agentcorelab.tool.RiskLevel;
 import com.agent.agentcorelab.tool.SemanticHint;
@@ -111,7 +113,11 @@ public final class AnnotatedTool implements Tool {
         Object[] invokeArgs = new Object[descriptors.size()];
         for (ParamDescriptor desc : descriptors) {
             if (desc.isContext()) {
-                invokeArgs[desc.index()] = context;
+                if (TrustedContext.class.isAssignableFrom(desc.type())) {
+                    invokeArgs[desc.index()] = context.trustedContext();
+                } else {
+                    invokeArgs[desc.index()] = context;
+                }
                 continue;
             }
 
