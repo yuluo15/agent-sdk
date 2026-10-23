@@ -19,7 +19,7 @@
 | **06** | **P1** | **解耦 Starter 单例 Runner，提供会话管理器** | `AgentConfiguration.java:101`<br>`SessionRunnerManager.java`<br>`DefaultSessionRunnerManager.java` | **✅ 已完成** | 废除全局单例 Runner 强制模式，提供基于 LRU 与 idleTimeout 闲置驱逐的轻量多会话管理器。 |
 | **07** | **P1** | **等待超时（waitingTimeout）配置化与全链路联动** | `AgentProperties.java`<br>`RunLimits.java`<br>`DefaultAgentRunner.java:274` | **✅ 已完成** | 在 application.yml 中开放挂起等待超时阈值，并在执行器超时检查中联动触发 RUN_TIMEOUT 事件与指标。 |
 | **08** | **P1** | **目标动态修订与取消机制安全加固** | `DefaultAgentRunner.java:563, 660`<br>`TaskPlan.java:37`<br>`OneShotHttpClient.java:525` | **✅ 已完成** | `reviseGoal` 强制校验版本单调递增并同步重建计划；`cancel` 改为非阻塞原子状态位与底层 OkHttp Call.cancel 协同即时中断。 |
-| **09** | **P2** | **MCP 协议升级与官方 Java SDK 替换** | `McpProtocolConstants.java:11`<br>`DefaultMcpClient.java` | **⏳ 待开始** | 引入官方 2.x SDK，支持 HTTP/SSE 远程传输与 OAuth，保留适配器与风险沙箱。 |
+| **09** | **P2** | **MCP 协议升级与官方 Java SDK 替换** | `OfficialMcpClient.java`<br>`McpProtocolConstants.java`<br>`McpAutoConfiguration.java` | **✅ 已完成** | 引入官方 0.17.x SDK；支持本地 Stdio 子进程与远程 HTTP/SSE 传输规范及 Bearer/OAuth 鉴权；保留沙箱外溢落盘。 |
 | **10** | **P2** | **企业技能生态标准化（支持 SKILL.md）** | `SkillDefinition.java`<br>`SkillConsultantTool.java` | **⏳ 待开始** | 支持开源规范的 `SKILL.md`（Prompt/SOP 元数据与正文解析），保留按需咨询工具。 |
 | **11** | **P2** | **Spring 容器内 MCP 与 @AgentTool 自动发现合并** | `McpAutoConfiguration.java`<br>`AgentConfiguration.java` | **⏳ 待开始** | 自动将容器中的 MCP 适配工具与 `@AgentComponent` 本地工具聚合进统一 ToolCatalog。 |
 | **12** | **P3** | **可信上下文（TrustedContext）注入** | `RunRequest.java:10`<br>`ToolContext.java:12` | **⏳ 待开始** | 宿主安全注入租户、调用人身份、授权范围与链路 traceId，模型无法越权篡改。 |
@@ -224,17 +224,44 @@
 
 ### 任务 09：MCP 协议升级与官方 MCP Java SDK 替换
 
-* **状态**：`⏳ 待开始`
-* **涉及代码**：[`McpProtocolConstants.java:11`](file:///D:/agent/agent-sdk/agent-mcp-adapter/src/main/java/com/agent/agentcorelab/mcp/McpProtocolConstants.java#L11)、[`DefaultMcpClient.java`](file:///D:/agent/agent-sdk/agent-mcp-adapter/src/main/java/com/agent/agentcorelab/mcp/client/DefaultMcpClient.java)
+* **状态**：`✅ 已完成`
+* **涉及代码**：
+  * [`OfficialMcpClient.java`](file:///D:/agent/agent-sdk/agent-mcp-adapter/src/main/java/com/agent/agentcorelab/mcp/client/OfficialMcpClient.java)
+  * [`McpProtocolConstants.java:11`](file:///D:/agent/agent-sdk/agent-mcp-adapter/src/main/java/com/agent/agentcorelab/mcp/protocol/McpProtocolConstants.java#L11)
+  * [`McpClient.java:67`](file:///D:/agent/agent-sdk/agent-mcp-adapter/src/main/java/com/agent/agentcorelab/mcp/client/McpClient.java#L67)
+  * [`DefaultMcpClient.java`](file:///D:/agent/agent-sdk/agent-mcp-adapter/src/main/java/com/agent/agentcorelab/mcp/client/DefaultMcpClient.java)
+  * [`McpServerBridge.java:58`](file:///D:/agent/agent-sdk/agent-mcp-adapter/src/main/java/com/agent/agentcorelab/mcp/adapter/McpServerBridge.java#L58)
+  * [`AgentMcpProperties.java:40`](file:///D:/agent/agent-sdk/agent-spring-boot-starter/src/main/java/com/agent/agentcorelab/bootstrap/mcp/AgentMcpProperties.java#L40)
+  * [`McpAutoConfiguration.java:70`](file:///D:/agent/agent-sdk/agent-spring-boot-starter/src/main/java/com/agent/agentcorelab/bootstrap/mcp/McpAutoConfiguration.java#L70)
 * **现状缺陷**：当前协议版本陈旧（硬编码 `2024-11-05`），自研手写简易 JSON-RPC，且仅支持本地进程 Stdio 管道，无法对接远程企业级 MCP 服务（HTTP / SSE 传输模式缺失）。
 * **优化实施方案**：
-  1. 引入官方 `io.modelcontextprotocol.sdk:mcp` (2.x) 依赖；
-  2. 废除自研的简易 JSON-RPC 编解码器与传输层；
-  3. 支持最新的远程 HTTP / SSE 传输协议及标准鉴权；
-  4. 保持上层 `McpToolAdapter` 接口与行为不变，继续保留白名单校验、`RiskLevel` 风险标注与超大结果沙箱外溢落盘能力。
-* **验收标准**：
-  * 本地 Stdio 与远程 HTTP/SSE 两种 MCP Server 的集成测试通过；
-  * 原有白名单与高危拦截行为 100% 保持兼容。
+  1. **引入官方 MCP Java SDK 标准件**：在 `agent-mcp-adapter/pom.xml` 中引入 `io.modelcontextprotocol.sdk:mcp` (0.17.1)，涵盖核心协议模型、`McpSyncClient`、`StdioClientTransport` 与 `HttpClientSseClientTransport`；
+  2. **实现企业级 `OfficialMcpClient`**：
+     * 完整实现 `com.agent.agentcorelab.mcp.client.McpClient` SPI 契约，支持双向同步与异步执行（`initialize`、`listTools`、`callTool`、`ping`）；
+     * 提供开箱即用的链式构建器 `OfficialMcpClient.builder(serverName)` 及快捷工厂方法（`.stdio(...)`、`.sse(...)`、`.from(...)`）；
+     * 支持远程 HTTP/SSE 协议端点发现握手、`Bearer / OAuth` 授权令牌自动注入以及自定义 HTTP 头传递；
+     * Stdio 模式下支持底层操作系统子进程 `ProcessHandle` 与 `pid()` 级联感知与优雅停机销毁；
+  3. **升级协议版本兼容与协商体系**：
+     * 在 `McpProtocolConstants` 中扩展支持 `2025-06-18` 与 `2025-11-25` 等现代规范常量，与标准件版本自动协商对齐，并保持对历史 `2024-11-05` 版本的 100% 向后兼容；
+  4. **全兼容生态契约与防腐隔离**：
+     * 保持 `McpToolAdapter`、`McpServerBridge` 和 `McpServerManager` 接口与机制完全不变；
+     * 原生保留工具名前缀定制、黑白名单精准过滤、`RiskLevel` 风险标注控制及超大产物沙箱外溢落盘（Safe Spillover）核心能力；
+     * 将旧版自研 `DefaultMcpClient` 标记为 `@Deprecated(since = "1.1.0")`，保障历史代码平滑升级；
+  5. **Spring Boot 自动装配全面扩展**：
+     * `AgentMcpProperties.ServerConfig` 扩展 `url`、`sseEndpoint`、`token`、`headers` 与 `useOfficialSdk` 配置字段；
+     * `McpAutoConfiguration` 智能识别 `stdio`、`sse` / `http` 与 `in_memory` 模式，默认启用官方 SDK 客户端并注册进 `McpServerManager`。
+* **验收测试**：
+  * [`OfficialMcpClientSseTests.java`](file:///D:/agent/agent-sdk/agent-mcp-adapter/src/test/java/com/agent/agentcorelab/mcp/client/OfficialMcpClientSseTests.java)（3/3 全部通过）：
+    * `testRemoteSseHandshakeAndTools`：验证远程 HTTP/SSE 建立连接、Bearer 鉴权头传输、租户请求头传递、端点重定向解析、工具枚举与心跳延迟检测；
+    * `testRemoteSseToolExecutionAndBridge`：验证官方客户端桥接到 `McpServerBridge` 后的白名单过滤、风险等级映射、正常工具执行与错误结果弹性包装；
+    * `testRemoteSseAsyncOperations`：验证 `initializeAsync`、`listToolsAsync` 与 `callToolAsync` 异步全链路。
+  * [`OfficialMcpClientStdioTests.java`](file:///D:/agent/agent-sdk/agent-mcp-adapter/src/test/java/com/agent/agentcorelab/mcp/client/OfficialMcpClientStdioTests.java)（1/1 通过）：
+    * 启动真实 Java 子进程（[`MockMcpStdioServerMain.java`](file:///D:/agent/agent-sdk/agent-mcp-adapter/src/test/java/com/agent/agentcorelab/mcp/client/MockMcpStdioServerMain.java)），验证双向标准流 JSON-RPC 通信、工具调用、`ProcessHandle` 存活检测及 client 关闭时的子进程退出。
+  * 历史测试套件 100% 绿色兼容通过：
+    * `McpClientAndAdapterTests`（6/6 全部通过）；
+    * `McpSafeSpilloverTests`（1/1 通过）；
+    * `McpJsonRpcCodecTests`（5/5 通过）；
+    * Reactor 6 模块全量单元测试（294/294 全部通过，0 failure, 0 error）。
 
 ---
 

@@ -56,8 +56,8 @@ public final class McpServerBridge implements AutoCloseable {
      * Returns the underlying operating system process handle if this server runs via a local subprocess.
      */
     public Optional<ProcessHandle> processHandle() {
-        if (client != null && client.transport() != null) {
-            return client.transport().processHandle();
+        if (client != null) {
+            return client.processHandle();
         }
         return Optional.empty();
     }

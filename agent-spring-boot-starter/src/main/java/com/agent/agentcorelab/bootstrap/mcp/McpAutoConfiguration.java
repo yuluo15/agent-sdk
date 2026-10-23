@@ -5,6 +5,7 @@ import com.agent.agentcorelab.mcp.adapter.McpServerBridge;
 import com.agent.agentcorelab.mcp.adapter.McpServerManager;
 import com.agent.agentcorelab.mcp.client.DefaultMcpClient;
 import com.agent.agentcorelab.mcp.client.McpClient;
+import com.agent.agentcorelab.mcp.client.OfficialMcpClient;
 import com.agent.agentcorelab.mcp.skill.DefaultSkillRegistry;
 import com.agent.agentcorelab.mcp.skill.SkillConsultantTool;
 import com.agent.agentcorelab.mcp.skill.SkillDefinition;
@@ -69,25 +70,44 @@ public class McpAutoConfiguration {
             AgentMcpProperties.ServerConfig config = entry.getValue();
 
             try {
-                McpTransport transport;
+                McpClient client;
                 if ("in_memory".equalsIgnoreCase(config.getTransport())) {
-                    transport = new InMemoryMcpTransport();
+                    McpTransport transport = new InMemoryMcpTransport();
+                    client = new DefaultMcpClient(serverName, transport);
+                } else if ("sse".equalsIgnoreCase(config.getTransport()) || "http".equalsIgnoreCase(config.getTransport())) {
+                    if (config.getUrl() == null || config.getUrl().isBlank()) {
+                        log.warn("MCP server [{}] configured with SSE transport but no URL specified. Skipping.", serverName);
+                        continue;
+                    }
+                    var sseBuilder = OfficialMcpClient.builder(serverName)
+                            .sse(config.getUrl(), config.getSseEndpoint())
+                            .authorization(config.getToken())
+                            .headers(config.getHeaders())
+                            .requestTimeout(Duration.ofSeconds(config.getTimeoutSeconds()));
+                    client = sseBuilder.build();
                 } else {
                     if (config.getCommand() == null || config.getCommand().isBlank()) {
                         log.warn("MCP server [{}] configured with stdio transport but no executable command specified. Skipping.", serverName);
                         continue;
                     }
-                    var builder = StdioProcessTransport.builder(config.getCommand())
-                            .args(config.getArgs())
-                            .environment(config.getEnv())
-                            .startupTimeout(Duration.ofSeconds(config.getTimeoutSeconds()));
-                    if (config.getWorkingDirectory() != null && !config.getWorkingDirectory().isBlank()) {
-                        builder.workingDirectory(new File(config.getWorkingDirectory()));
+                    if (config.isUseOfficialSdk()) {
+                        var stdioBuilder = OfficialMcpClient.builder(serverName)
+                                .stdio(config.getCommand(), config.getArgs(), config.getEnv())
+                                .requestTimeout(Duration.ofSeconds(config.getTimeoutSeconds()));
+                        client = stdioBuilder.build();
+                    } else {
+                        var builder = StdioProcessTransport.builder(config.getCommand())
+                                .args(config.getArgs())
+                                .environment(config.getEnv())
+                                .startupTimeout(Duration.ofSeconds(config.getTimeoutSeconds()));
+                        if (config.getWorkingDirectory() != null && !config.getWorkingDirectory().isBlank()) {
+                            builder.workingDirectory(new File(config.getWorkingDirectory()));
+                        }
+                        McpTransport transport = builder.build();
+                        client = new DefaultMcpClient(serverName, transport);
                     }
-                    transport = builder.build();
                 }
 
-                DefaultMcpClient client = new DefaultMcpClient(serverName, transport);
                 var bridgeBuilder = McpServerBridge.builder(client);
 
                 if (config.getToolPrefix() != null && !config.getToolPrefix().isBlank()) {

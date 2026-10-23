@@ -20,7 +20,11 @@ import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Standard implementation of {@link McpClient} managing protocol handshake and RPC execution.
+ *
+ * @deprecated As of 1.1.0, replaced by {@link OfficialMcpClient} which leverages the official
+ * Model Context Protocol SDK ({@code io.modelcontextprotocol.sdk:mcp}) with remote HTTP/SSE and OAuth support.
  */
+@Deprecated(since = "1.1.0")
 public final class DefaultMcpClient implements McpClient {
 
     private enum State {

@@ -72,6 +72,20 @@ public interface McpClient extends AutoCloseable {
     }
 
     /**
+     * Returns the underlying operating system process handle if this client connects via a local subprocess.
+     */
+    default java.util.Optional<ProcessHandle> processHandle() {
+        return transport() != null ? transport().processHandle() : java.util.Optional.empty();
+    }
+
+    /**
+     * Returns the process ID (PID) if this client connects via a local subprocess.
+     */
+    default java.util.Optional<Long> pid() {
+        return processHandle().map(ProcessHandle::pid);
+    }
+
+    /**
      * Closes the client connection and releases transport resources.
      */
     @Override

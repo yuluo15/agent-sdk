@@ -38,9 +38,34 @@ public class AgentMcpProperties {
 
     public static class ServerConfig {
         /**
-         * Transport type: "stdio" (default) or "in_memory" (useful for testing).
+         * Transport type: "stdio" (default), "sse" / "http" (remote HTTP/SSE), or "in_memory" (testing).
          */
         private String transport = "stdio";
+
+        /**
+         * Base URL for remote HTTP/SSE MCP server (e.g. "http://localhost:8080" or "https://mcp.internal.net").
+         */
+        private String url;
+
+        /**
+         * SSE endpoint path for remote MCP server (defaults to "/sse").
+         */
+        private String sseEndpoint = "/sse";
+
+        /**
+         * Optional authentication token (Bearer token or OAuth token) sent in the Authorization header.
+         */
+        private String token;
+
+        /**
+         * Custom HTTP headers passed when connecting to remote HTTP/SSE MCP servers.
+         */
+        private Map<String, String> headers = new LinkedHashMap<>();
+
+        /**
+         * Whether to use the official modelcontextprotocol Java SDK client (defaults to true).
+         */
+        private boolean useOfficialSdk = true;
 
         /**
          * Executable command for stdio process (e.g. "npx", "python", "node", "uvx").
@@ -165,6 +190,46 @@ public class AgentMcpProperties {
 
         public void setTimeoutSeconds(int timeoutSeconds) {
             this.timeoutSeconds = timeoutSeconds;
+        }
+
+        public String getUrl() {
+            return url;
+        }
+
+        public void setUrl(String url) {
+            this.url = url;
+        }
+
+        public String getSseEndpoint() {
+            return sseEndpoint;
+        }
+
+        public void setSseEndpoint(String sseEndpoint) {
+            this.sseEndpoint = sseEndpoint;
+        }
+
+        public String getToken() {
+            return token;
+        }
+
+        public void setToken(String token) {
+            this.token = token;
+        }
+
+        public Map<String, String> getHeaders() {
+            return headers;
+        }
+
+        public void setHeaders(Map<String, String> headers) {
+            this.headers = headers;
+        }
+
+        public boolean isUseOfficialSdk() {
+            return useOfficialSdk;
+        }
+
+        public void setUseOfficialSdk(boolean useOfficialSdk) {
+            this.useOfficialSdk = useOfficialSdk;
         }
     }
 }

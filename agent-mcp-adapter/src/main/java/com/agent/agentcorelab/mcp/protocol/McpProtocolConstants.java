@@ -8,7 +8,13 @@ public final class McpProtocolConstants {
     private McpProtocolConstants() {}
 
     public static final String JSONRPC_VERSION = "2.0";
-    public static final String LATEST_PROTOCOL_VERSION = "2024-11-05";
+
+    // Supported Model Context Protocol (MCP) versions
+    public static final String PROTOCOL_VERSION_2024_11_05 = "2024-11-05";
+    public static final String PROTOCOL_VERSION_2025_06_18 = "2025-06-18";
+    public static final String PROTOCOL_VERSION_2025_11_25 = "2025-11-25";
+
+    public static final String LATEST_PROTOCOL_VERSION = PROTOCOL_VERSION_2025_06_18;
     public static final String PROTOCOL_VERSION = LATEST_PROTOCOL_VERSION;
 
     // Core Lifecycle & Utility Methods
