@@ -73,6 +73,30 @@ class McpAutoConfigurationTests {
         });
     }
 
+    @Test
+    @DisplayName("Loads SKILL.md files from configured skills-directory")
+    void testSkillsDirectoryLoading(@org.junit.jupiter.api.io.TempDir java.nio.file.Path tempDir) throws java.io.IOException {
+        java.nio.file.Path skillFile = tempDir.resolve("SKILL.md");
+        java.nio.file.Files.writeString(skillFile, """
+                ---
+                name: auto-loaded-skill
+                description: Auto loaded from configured directory
+                tags: [auto, test]
+                ---
+                # Auto Loaded SOP
+                Step 1: Do something.
+                """);
+
+        runner.withPropertyValues("agent.mcp.skills-directory=" + tempDir.toAbsolutePath())
+                .run(context -> {
+                    assertNull(context.getStartupFailure());
+                    SkillRegistry registry = context.getBean(SkillRegistry.class);
+                    assertNotNull(registry);
+                    assertTrue(registry.hasSkill("auto-loaded-skill"));
+                    assertEquals("Auto loaded from configured directory", registry.get("auto-loaded-skill").get().description());
+                });
+    }
+
     @Configuration
     static class SkillTestConfig {
         @Bean

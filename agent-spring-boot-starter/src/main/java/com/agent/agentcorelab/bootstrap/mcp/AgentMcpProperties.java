@@ -20,12 +20,25 @@ public class AgentMcpProperties {
      */
     private Map<String, ServerConfig> servers = new LinkedHashMap<>();
 
+    /**
+     * Optional file path or directory containing enterprise SKILL.md definitions to automatically load.
+     */
+    private String skillsDirectory;
+
     public boolean isEnabled() {
         return enabled;
     }
 
     public void setEnabled(boolean enabled) {
         this.enabled = enabled;
+    }
+
+    public String getSkillsDirectory() {
+        return skillsDirectory;
+    }
+
+    public void setSkillsDirectory(String skillsDirectory) {
+        this.skillsDirectory = skillsDirectory;
     }
 
     public Map<String, ServerConfig> getServers() {

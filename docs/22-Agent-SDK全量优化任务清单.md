@@ -20,7 +20,7 @@
 | **07** | **P1** | **等待超时（waitingTimeout）配置化与全链路联动** | `AgentProperties.java`<br>`RunLimits.java`<br>`DefaultAgentRunner.java:274` | **✅ 已完成** | 在 application.yml 中开放挂起等待超时阈值，并在执行器超时检查中联动触发 RUN_TIMEOUT 事件与指标。 |
 | **08** | **P1** | **目标动态修订与取消机制安全加固** | `DefaultAgentRunner.java:563, 660`<br>`TaskPlan.java:37`<br>`OneShotHttpClient.java:525` | **✅ 已完成** | `reviseGoal` 强制校验版本单调递增并同步重建计划；`cancel` 改为非阻塞原子状态位与底层 OkHttp Call.cancel 协同即时中断。 |
 | **09** | **P2** | **MCP 协议升级与官方 Java SDK 替换** | `OfficialMcpClient.java`<br>`McpProtocolConstants.java`<br>`McpAutoConfiguration.java` | **✅ 已完成** | 引入官方 0.17.x SDK；支持本地 Stdio 子进程与远程 HTTP/SSE 传输规范及 Bearer/OAuth 鉴权；保留沙箱外溢落盘。 |
-| **10** | **P2** | **企业技能生态标准化（支持 SKILL.md）** | `SkillDefinition.java`<br>`SkillConsultantTool.java` | **⏳ 待开始** | 支持开源规范的 `SKILL.md`（Prompt/SOP 元数据与正文解析），保留按需咨询工具。 |
+| **10** | **P2** | **企业技能生态标准化（支持 SKILL.md）** | `SkillDefinition.java`<br>`SkillParser.java`<br>`SkillLoader.java`<br>`SkillConsultantTool.java` | **✅ 已完成** | 支持 agentskills.io 规范的 `SKILL.md`（YAML Frontmatter 元数据与 Markdown SOP 正文解析），支持目录批量递归扫描，保留按需咨询工具。 |
 | **11** | **P2** | **Spring 容器内 MCP 与 @AgentTool 自动发现合并** | `McpAutoConfiguration.java`<br>`AgentConfiguration.java` | **⏳ 待开始** | 自动将容器中的 MCP 适配工具与 `@AgentComponent` 本地工具聚合进统一 ToolCatalog。 |
 | **12** | **P3** | **可信上下文（TrustedContext）注入** | `RunRequest.java:10`<br>`ToolContext.java:12` | **⏳ 待开始** | 宿主安全注入租户、调用人身份、授权范围与链路 traceId，模型无法越权篡改。 |
 | **13** | **P3** | **审批绑定防重放与参数防篡改** | `ApprovalRequest.java`<br>`DefaultAgentRunner.java:910` | **⏳ 待开始** | 审批绑定主体、SHA-256 参数哈希、策略版本与有效期，执行前二次复核参数一致性。 |
@@ -267,15 +267,40 @@
 
 ### 任务 10：企业技能生态标准化（支持业界标准 SKILL.md）
 
-* **状态**：`⏳ 待开始`
-* **涉及代码**：[`SkillDefinition.java`](file:///D:/agent/agent-sdk/agent-mcp-adapter/src/main/java/com/agent/agentcorelab/skill/SkillDefinition.java)、[`SkillConsultantTool.java`](file:///D:/agent/agent-sdk/agent-mcp-adapter/src/main/java/com/agent/agentcorelab/skill/SkillConsultantTool.java)
-* **现状缺陷**：当前使用自定义的 Java 类/JSON 格式定义技能，无法直接复用开源社区和企业沉淀的 Markdown Prompt 技能文件。
+* **状态**：`✅ 已完成`
+* **涉及代码**：
+  * [`SkillDefinition.java`](file:///D:/agent/agent-sdk/agent-mcp-adapter/src/main/java/com/agent/agentcorelab/mcp/skill/SkillDefinition.java)
+  * [`SkillParser.java`](file:///D:/agent/agent-sdk/agent-mcp-adapter/src/main/java/com/agent/agentcorelab/mcp/skill/SkillParser.java)
+  * [`SkillLoader.java`](file:///D:/agent/agent-sdk/agent-mcp-adapter/src/main/java/com/agent/agentcorelab/mcp/skill/SkillLoader.java)
+  * [`SkillRegistry.java`](file:///D:/agent/agent-sdk/agent-mcp-adapter/src/main/java/com/agent/agentcorelab/mcp/skill/SkillRegistry.java)
+  * [`DefaultSkillRegistry.java`](file:///D:/agent/agent-sdk/agent-mcp-adapter/src/main/java/com/agent/agentcorelab/mcp/skill/DefaultSkillRegistry.java)
+  * [`SkillConsultantTool.java`](file:///D:/agent/agent-sdk/agent-mcp-adapter/src/main/java/com/agent/agentcorelab/mcp/skill/SkillConsultantTool.java)
+  * [`AgentMcpProperties.java`](file:///D:/agent/agent-spring-boot-starter/src/main/java/com/agent/agentcorelab/bootstrap/mcp/AgentMcpProperties.java)
+  * [`McpAutoConfiguration.java`](file:///D:/agent/agent-spring-boot-starter/src/main/java/com/agent/agentcorelab/bootstrap/mcp/McpAutoConfiguration.java)
+* **现状缺陷**：当前使用自定义的 Java 类/JSON 格式定义技能，无法直接复用开源社区（如 agentskills.io）和企业内部沉淀的通用 Markdown Prompt 技能文件。
 * **优化实施方案**：
-  1. 按照开源规范（agentskills.io）支持解析标准 `SKILL.md`（解析 YAML Frontmatter 元数据与 Markdown SOP 正文）；
-  2. 保持 Agent 通过 `consult_skill` 工具按需咨询 SOP 的机制不变。
-* **验收标准**：
-  * 读取合法与非法 `SKILL.md` 样本的单元测试通过；
-  * Agent 能够正确按需调用 `consult_skill` 获取 SOP 细节。
+  1. **支持业界标准 SKILL.md 解析**：
+     * 引入轻量级专用标准解析器 [`SkillParser`](file:///D:/agent/agent-sdk/agent-mcp-adapter/src/main/java/com/agent/agentcorelab/mcp/skill/SkillParser.java)，规范提取头部 `---` 包含的 YAML Frontmatter 元数据与正文 Markdown SOP；
+     * 严格兼容 agentskills.io 命名与属性规范：映射 `name` / `id`、`description`、`tags`（兼容 `category` / `categories` 及逗号分隔）、前置依赖工具 `prerequisite_tools`（兼容 `prerequisiteTools` / `tools`）、`license`、`version` 以及自定义 `metadata`；
+     * 健壮容错与双向序列化：支持 Markdown 正文内嵌水平分割线 `---`、代码块与复杂格式不受破坏；提供 `toMarkdown()` 双向序列化与重解析无损 round-trip 能力；
+  2. **支持文件与多层级目录自动加载**：
+     * 引入 [`SkillLoader`](file:///D:/agent/agent-sdk/agent-mcp-adapter/src/main/java/com/agent/agentcorelab/mcp/skill/SkillLoader.java)，支持单文件及递归多层级目录扫描加载（智能匹配 `SKILL.md` 及 `*.skill.md` 文件，安全忽略无关 Markdown 如 `README.md`）；
+     * 在 `SkillRegistry` 与 `DefaultSkillRegistry` 扩展 `loadFromDirectory`、`loadFromFile` 与 `registerSkillMd` 接口；
+  3. **保留 Agent 按需咨询机制与工具链联动**：
+     * 维持 [`SkillConsultantTool`](file:///D:/agent/agent-sdk/agent-mcp-adapter/src/main/java/com/agent/agentcorelab/mcp/skill/SkillConsultantTool.java)（`consult_skill`）接口与协议 100% 不变，动态校验前置工具并完整返回 SOP；
+     * 在 Spring Boot Starter（[`McpAutoConfiguration`](file:///D:/agent/agent-spring-boot-starter/src/main/java/com/agent/agentcorelab/bootstrap/mcp/McpAutoConfiguration.java) 与 [`AgentMcpProperties`](file:///D:/agent/agent-spring-boot-starter/src/main/java/com/agent/agentcorelab/bootstrap/mcp/AgentMcpProperties.java)）中扩展 `agent.mcp.skills-directory` 配置，启动时自动扫描并注册全量企业技能。
+* **验收测试**：
+  * [`SkillMdParserAndLoaderTests.java`](file:///D:/agent/agent-sdk/agent-mcp-adapter/src/test/java/com/agent/agentcorelab/mcp/skill/SkillMdParserAndLoaderTests.java)（7/7 通过）：
+    * `testParseCompleteSkillMd`：验证标准完整 SKILL.md 各种属性及内嵌分割线正文解析；
+    * `testParseMinimalSkillMdWithSlugName`：验证最小技能文件解析与人类可读名称自动转换为合规 slug id；
+    * `testParseAlternativeKeys`：验证 category 与逗号分隔工具名别名兼容；
+    * `testRoundTripSerialization`：验证 `toMarkdown()` 输出与再次解析完全一致；
+    * `testValidationConstraints`：验证缺少 Frontmatter、缺少 name/description、非法字符等全部受控抛出异常；
+    * `testDirectoryLoadingAndRegistry`：验证真实临时文件目录多层级扫描与非技能文件过滤；
+    * `testConsultantToolWithLoadedSkill`：验证 Agent 运行态调用 `consult_skill` 工具咨询由 SKILL.md 注册的 SOP。
+  * [`McpAutoConfigurationTests.java`](file:///D:/agent/agent-spring-boot-starter/src/test/java/com/agent/agentcorelab/bootstrap/McpAutoConfigurationTests.java)：
+    * `testSkillsDirectoryLoading`：验证 Spring 容器通过配置 `agent.mcp.skills-directory` 自动加载并注入 `SkillRegistry`。
+  * Reactor 6 模块全量单元测试 100% 绿色通过（303/303 全部通过，0 failure, 0 error）。
 
 ---
 

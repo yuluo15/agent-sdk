@@ -36,6 +36,47 @@ public record SkillDefinition(
         return new Builder(id);
     }
 
+    /**
+     * Parses an industry-standard SKILL.md formatted markdown string into a {@link SkillDefinition}.
+     *
+     * @param markdown the raw markdown content containing YAML frontmatter and SOP body
+     * @return the parsed skill definition
+     */
+    public static SkillDefinition fromMarkdown(String markdown) {
+        return SkillParser.parse(markdown);
+    }
+
+    /**
+     * Parses an industry-standard SKILL.md formatted markdown string with an optional fallback ID.
+     *
+     * @param markdown the raw markdown content
+     * @param fallbackId optional fallback ID used if no valid ID or name is defined
+     * @return the parsed skill definition
+     */
+    public static SkillDefinition fromMarkdown(String markdown, String fallbackId) {
+        return SkillParser.parse(markdown, fallbackId);
+    }
+
+    /**
+     * Parses a SKILL.md file into a {@link SkillDefinition}.
+     *
+     * @param path file path to the SKILL.md file
+     * @return the parsed skill definition
+     * @throws java.io.IOException if an I/O error occurs
+     */
+    public static SkillDefinition fromFile(java.nio.file.Path path) throws java.io.IOException {
+        return SkillParser.parseFile(path);
+    }
+
+    /**
+     * Exports this skill definition into standard SKILL.md format with YAML frontmatter and SOP body.
+     *
+     * @return SKILL.md formatted string
+     */
+    public String toMarkdown() {
+        return SkillParser.toMarkdown(this);
+    }
+
     public static final class Builder {
         private final String id;
         private String name;

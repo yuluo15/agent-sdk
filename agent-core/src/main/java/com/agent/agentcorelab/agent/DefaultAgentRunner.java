@@ -170,7 +170,7 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
             if (closed) {
                 throw new IllegalStateException("Runner is closed");
             }
-            if (current != null && !terminal(current.status)) {
+            if (current != null && (current.active || !terminal(current.status))) {
                 ActiveTaskPolicy taskPolicy = effectivePolicy.activeTaskPolicy();
                 switch (taskPolicy) {
                     case RESUME_IF_WAITING -> {
@@ -470,9 +470,11 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
             ToolOutcome outcome;
             long toolStart = nanoTime.getAsLong();
             try {
+                state.currentToolThread.set(Thread.currentThread());
                 try {
                     outcome = state.executor.execute(call, context);
                 } finally {
+                    state.currentToolThread.set(null);
                     state.toolNanos += Math.max(0L, nanoTime.getAsLong() - toolStart);
                 }
             } catch (CancellationException | ActiveTimeExceededException ex) {
@@ -674,9 +676,10 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
             state.cancelled.set(true);
             if (state.status.isWaiting()) {
                 wasWaiting = true;
-                finish(state, RunStatus.CANCELLED, "CANCELLED", "Task cancelled");
+                cancelWaiting(state);
             } else {
                 finish(state, RunStatus.CANCELLED, "CANCELLED", "Task cancelled; existing artifacts were retained");
+                publish(state);
             }
         }
         state.abortActiveOperations();
@@ -985,9 +988,11 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
                         artifact -> state.artifacts.add(artifact), state.resources);
                 long toolStart = nanoTime.getAsLong();
                 try {
+                    state.currentToolThread.set(Thread.currentThread());
                     try {
                         outcome = state.executor.execute(call, context);
                     } finally {
+                        state.currentToolThread.set(null);
                         state.toolNanos += Math.max(0L, nanoTime.getAsLong() - toolStart);
                     }
                 } catch (CancellationException | ActiveTimeExceededException ex) {
@@ -1585,6 +1590,7 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
         private TaskPlan taskPlan;
         private int maxCorrections = 2;
         private final AtomicReference<Thread> runnerThread = new AtomicReference<>();
+        private final AtomicReference<Thread> currentToolThread = new AtomicReference<>();
         private boolean released;
 
         private void abortActiveOperations() {
@@ -1595,10 +1601,10 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
                 } catch (Exception ignored) {
                 }
             }
-            Thread t = this.runnerThread.get();
-            if (t != null && t != Thread.currentThread()) {
+            Thread toolThread = this.currentToolThread.get();
+            if (toolThread != null && toolThread != Thread.currentThread()) {
                 try {
-                    t.interrupt();
+                    toolThread.interrupt();
                 } catch (Exception ignored) {
                 }
             }

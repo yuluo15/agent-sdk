@@ -37,4 +37,28 @@ public interface SkillRegistry {
      * Checks if a skill with the specified ID is registered.
      */
     boolean hasSkill(String id);
+
+    /**
+     * Loads and registers all SKILL.md enterprise skill definitions found in the specified directory.
+     *
+     * @param directory directory containing skill files
+     * @return unmodifiable list of newly registered skills
+     */
+    List<SkillDefinition> loadFromDirectory(java.nio.file.Path directory);
+
+    /**
+     * Loads and registers a skill definition from a SKILL.md file.
+     *
+     * @param file path to the SKILL.md file
+     * @return the parsed and registered skill definition
+     */
+    SkillDefinition loadFromFile(java.nio.file.Path file);
+
+    /**
+     * Parses and registers a skill from standard SKILL.md markdown text.
+     *
+     * @param markdown markdown content containing YAML frontmatter and SOP body
+     * @return the parsed and registered skill definition
+     */
+    SkillDefinition registerSkillMd(String markdown);
 }

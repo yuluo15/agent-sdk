@@ -47,10 +47,26 @@ public class McpAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean(SkillRegistry.class)
-    public SkillRegistry skillRegistry(ObjectProvider<SkillDefinition> skillDefinitions) {
+    public SkillRegistry skillRegistry(ObjectProvider<SkillDefinition> skillDefinitions, AgentMcpProperties properties) {
         List<SkillDefinition> initial = skillDefinitions.orderedStream().toList();
-        log.info("Initialized Enterprise SkillRegistry with {} skill definition(s)", initial.size());
-        return new DefaultSkillRegistry(initial);
+        DefaultSkillRegistry registry = new DefaultSkillRegistry(initial);
+
+        String skillsDir = properties.getSkillsDirectory();
+        if (skillsDir != null && !skillsDir.isBlank()) {
+            java.nio.file.Path path = java.nio.file.Paths.get(skillsDir.trim());
+            if (java.nio.file.Files.isDirectory(path)) {
+                List<SkillDefinition> loaded = registry.loadFromDirectory(path);
+                log.info("Loaded {} enterprise skill(s) from directory: {}", loaded.size(), path.toAbsolutePath());
+            } else if (java.nio.file.Files.isRegularFile(path)) {
+                SkillDefinition loaded = registry.loadFromFile(path);
+                log.info("Loaded enterprise skill '{}' from file: {}", loaded.id(), path.toAbsolutePath());
+            } else {
+                log.warn("Configured skillsDirectory does not exist: {}", path.toAbsolutePath());
+            }
+        }
+
+        log.info("Initialized Enterprise SkillRegistry with {} skill definition(s)", registry.listAll().size());
+        return registry;
     }
 
     @Bean

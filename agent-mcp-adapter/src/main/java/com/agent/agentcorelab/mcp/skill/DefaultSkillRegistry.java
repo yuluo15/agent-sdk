@@ -76,4 +76,27 @@ public final class DefaultSkillRegistry implements SkillRegistry {
     public boolean hasSkill(String id) {
         return id != null && skills.containsKey(id);
     }
+
+    @Override
+    public List<SkillDefinition> loadFromDirectory(java.nio.file.Path directory) {
+        List<SkillDefinition> loaded = SkillLoader.loadFromDirectory(directory);
+        for (SkillDefinition skill : loaded) {
+            register(skill);
+        }
+        return loaded;
+    }
+
+    @Override
+    public SkillDefinition loadFromFile(java.nio.file.Path file) {
+        SkillDefinition skill = SkillLoader.loadFromFile(file);
+        register(skill);
+        return skill;
+    }
+
+    @Override
+    public SkillDefinition registerSkillMd(String markdown) {
+        SkillDefinition skill = SkillDefinition.fromMarkdown(markdown);
+        register(skill);
+        return skill;
+    }
 }
