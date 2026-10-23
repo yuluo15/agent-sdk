@@ -1,11 +1,15 @@
 package com.agent.agentcorelab.agent;
 
+import com.agent.agentcorelab.agent.context.TrustedContext;
 import com.agent.agentcorelab.agent.plan.TaskBrief;
 import com.agent.agentcorelab.agent.plan.TaskPlan;
 import com.agent.agentcorelab.agent.plan.TaskStep;
 import com.agent.agentcorelab.agent.policy.ActiveTaskConflictException;
 import com.agent.agentcorelab.agent.policy.ActiveTaskPolicy;
 import com.agent.agentcorelab.agent.policy.ExecutionPolicy;
+import com.agent.agentcorelab.policy.AuthDecision;
+import com.agent.agentcorelab.policy.OutputDecision;
+import com.agent.agentcorelab.policy.ToolPolicy;
 import com.agent.agentcorelab.agent.run.ApprovalRequest;
 import com.agent.agentcorelab.agent.run.PendingQuestion;
 import com.agent.agentcorelab.agent.run.RunLimits;
@@ -956,10 +960,32 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
             }
             if (outcome == null && !ClarificationTool.NAME.equals(call.name()) && !UpdatePlanTool.NAME.equals(call.name())) {
                 Tool registeredTool = state.catalog.find(call.name()).orElse(null);
-                if (registeredTool != null && registeredTool.definition().isHighRisk()) {
+                ToolDefinition toolDef = registeredTool != null ? registeredTool.definition() : ToolDefinition.of(call.name(), "Tool " + call.name());
+                TrustedContext trustedCtx = state.request.resolvedTrustedContext();
+
+                AuthDecision authDecision = state.policy.toolPolicy().beforeExecute(toolDef, call.argumentsJson(), trustedCtx);
+                if (authDecision instanceof AuthDecision.Deny deny) {
+                    outcome = new ToolOutcome.Failure(deny.errorCode(), deny.reason(), deny.terminal());
+                    event(state, RunEvent.Type.POLICY_DENIED, Map.of(
+                            "callId", call.callId(),
+                            "tool", call.name(),
+                            "outcome", "POLICY_DENIED",
+                            "reason", deny.reason(),
+                            "errorCode", deny.errorCode()
+                    ));
+                } else if (authDecision instanceof AuthDecision.RequireApproval reqApproval) {
                     String approvalId = UUID.randomUUID().toString();
-                    String description = "High-risk action '" + call.name() + "' requires human approval.";
-                    ApprovalRequest req = new ApprovalRequest(approvalId, call.callId(), call.name(), call.argumentsJson(), description, Instant.now());
+                    String description = reqApproval.reason();
+                    ApprovalRequest req = new ApprovalRequest(
+                            approvalId,
+                            call.callId(),
+                            call.name(),
+                            call.argumentsJson(),
+                            description,
+                            Instant.now(),
+                            reqApproval.policyVersion(),
+                            reqApproval.requiredRole()
+                    );
                     synchronized (state) {
                         if (controlledStop(state)) {
                             return;
@@ -973,7 +999,9 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
                                 "approvalId", approvalId,
                                 "callId", call.callId(),
                                 "tool", call.name(),
-                                "argumentsSha256", digest(call.argumentsJson())
+                                "argumentsSha256", digest(call.argumentsJson()),
+                                "policyVersion", reqApproval.policyVersion(),
+                                "requiredRole", reqApproval.requiredRole()
                         ));
                         safeEmit(listener, RunStreamChunk.waitingApproval(req));
                     }
@@ -1037,15 +1065,42 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
     }
 
     private void accept(State state, ToolCall call, ToolOutcome outcome, Consumer<RunStreamChunk> listener) {
-        state.observations.add(new RunSnapshot.Observation(call, outcome));
-        state.errors = outcome instanceof ToolOutcome.Failure ? state.errors + 1 : 0;
-        state.session.appendToolResult(call.callId(), outcome);
-        String outcomeCode = outcome instanceof ToolOutcome.Failure failure ? failure.code() : "SUCCESS";
+        ToolOutcome effectiveOutcome = outcome;
+        if (outcome instanceof ToolOutcome.Success
+                && !ClarificationTool.NAME.equals(call.name())
+                && !UpdatePlanTool.NAME.equals(call.name())) {
+            Tool registeredTool = state.catalog.find(call.name()).orElse(null);
+            ToolDefinition toolDef = registeredTool != null ? registeredTool.definition() : ToolDefinition.of(call.name(), "Tool " + call.name());
+            TrustedContext trustedCtx = state.request.resolvedTrustedContext();
+
+            OutputDecision outputDecision = state.policy.toolPolicy().afterExecute(toolDef, outcome, trustedCtx);
+            if (outputDecision instanceof OutputDecision.Redact redact) {
+                effectiveOutcome = redact.sanitizedOutcome();
+                event(state, RunEvent.Type.OUTPUT_REDACTED, Map.of(
+                        "callId", call.callId(),
+                        "tool", call.name(),
+                        "reason", redact.reason()
+                ));
+            } else if (outputDecision instanceof OutputDecision.DenyOutput denyOutput) {
+                effectiveOutcome = new ToolOutcome.Failure(denyOutput.errorCode(), denyOutput.reason(), false);
+                event(state, RunEvent.Type.OUTPUT_BLOCKED, Map.of(
+                        "callId", call.callId(),
+                        "tool", call.name(),
+                        "reason", denyOutput.reason(),
+                        "errorCode", denyOutput.errorCode()
+                ));
+            }
+        }
+
+        state.observations.add(new RunSnapshot.Observation(call, effectiveOutcome));
+        state.errors = effectiveOutcome instanceof ToolOutcome.Failure ? state.errors + 1 : 0;
+        state.session.appendToolResult(call.callId(), effectiveOutcome);
+        String outcomeCode = effectiveOutcome instanceof ToolOutcome.Failure failure ? failure.code() : "SUCCESS";
         Map<String, Object> toolPayload = new LinkedHashMap<>();
         toolPayload.put("callId", call.callId());
         toolPayload.put("tool", call.name());
         toolPayload.put("outcome", outcomeCode);
-        if (outcome instanceof ToolOutcome.Failure failure && failure.message() != null) {
+        if (effectiveOutcome instanceof ToolOutcome.Failure failure && failure.message() != null) {
             toolPayload.put("error", failure.message());
         }
         event(state, RunEvent.Type.TOOL_FINISHED, toolPayload);

@@ -84,7 +84,7 @@ flowchart TD
 | **--** | **已归档** | **P0/P1/P2 历史基础加固** | `agent-core`<br>`agent-mcp-adapter` | **✅ 已完成** | 涵盖原任务 01–10（MCP 弹性容错、Token 加权、模型有限重试、事件语义、产物校验、SessionRunnerManager、waitingTimeout、目标修订原子重建、官方 MCP Java SDK 0.17.1、SKILL.md 标准解析）。 |
 | **03** | **P1** | **工具标准治理语义扩展** | `ToolSemantics.java`<br>`ToolDefinition.java` | **✅ 已完成** | 引入 `SemanticHint` 三态（`YES/NO/UNKNOWN`）声明 `readOnly`、`destructive`、`idempotent`、`openWorld`；`@AgentTool` 支持声明治理语义；宿主支持对外部 MCP 工具强制覆盖防篡改；318 个用例 100% 通过。 |
 | **04** | **P1** | **可信上下文（TrustedContext）注入** | `TrustedContext.java`<br>`RunRequest.java`<br>`ToolContext.java` | **✅ 已完成** | 宿主安全注入租户 `tenantId`、主体 `userPrincipal`、权限集 `scopes` 与 `traceId`，只读不可变设计；模型与参数不可伪造；`@AgentTool` 支持隐式注入；323 个用例 100% 通过。 |
-| **05** | **P1** | **双阶段策略执行引擎（ToolPolicy SPI）** | `ToolPolicy.java`<br>`DefaultAgentRunner.java` | **⏳ 待开始** | 执行前 `beforeExecute`（`ALLOW / DENY / REQUIRE_APPROVAL`）；执行后出域保护 `afterExecute`（`ALLOW_OUTPUT / REDACT / DENY_OUTPUT`）。 |
+| **05** | **P1** | **双阶段策略执行引擎（ToolPolicy SPI）** | `ToolPolicy.java`<br>`DefaultAgentRunner.java` | **✅ 已完成** | 执行前 `beforeExecute`（`ALLOW / DENY / REQUIRE_APPROVAL`）；执行后出域保护 `afterExecute`（`ALLOW_OUTPUT / REDACT / DENY_OUTPUT`）；单测覆盖策略放行、拦截阻断、挂起审批与出域敏感信息脱敏全场景；347 个用例 100% 通过。 |
 | **06** | **P1** | **防篡改与防重放审批绑定** | `ApprovalBinding.java`<br>`ApprovalRequest.java` | **⏳ 待开始** | 强绑定申请人、审批角色、租户、工具名/callId、参数 SHA-256 哈希、TTL 与单次使用令牌；执行前二次比对参数与权限。 |
 | **07** | **P1** | **只追加企业审计日志契约** | `AuditTrailSpi.java`<br>`DefaultAgentRunner.java` | **⏳ 待开始** | 规范只追加（Append-Only）审计事件契约；记录治理决策链路；不写完整敏感 Prompt；明确存储防篡改由外接系统承担。 |
 | **--** | **Gate A**| **合成高风险攻防验证（L1 评定）** | `SyntheticGovernanceTests.java` | **⏳ 待开始** | 针对“酒店退改签与违约金减免”沙箱场景，验证 8 项安全红线均为 0 违规，证明最小治理闭环成立。 |

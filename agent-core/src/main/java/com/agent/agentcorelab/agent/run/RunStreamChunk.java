@@ -60,7 +60,9 @@ public record RunStreamChunk(
                         "toolName", request.toolName(),
                         "callId", request.callId(),
                         "argumentsJson", request.argumentsJson(),
-                        "description", request.description()
+                        "description", request.description(),
+                        "policyVersion", request.policyVersion(),
+                        "requiredRole", request.requiredRole()
                 ));
     }
 
@@ -73,10 +75,12 @@ public record RunStreamChunk(
         String call = (String) metadata.get("callId");
         String args = (String) metadata.get("argumentsJson");
         String desc = (String) metadata.get("description");
+        String policyVer = (String) metadata.getOrDefault("policyVersion", "1.0");
+        String reqRole = (String) metadata.getOrDefault("requiredRole", "OPERATOR");
         if (approvalId == null) {
             return Optional.empty();
         }
-        return Optional.of(new ApprovalRequest(approvalId, call, tool, args, desc, null));
+        return Optional.of(new ApprovalRequest(approvalId, call, tool, args, desc, null, policyVer, reqRole));
     }
 
     public static RunStreamChunk statusChanged(RunStatus status) {

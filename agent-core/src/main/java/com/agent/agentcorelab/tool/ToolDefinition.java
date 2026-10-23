@@ -27,6 +27,11 @@ public record ToolDefinition(
         this(name, description, inputSchema, riskLevel, ToolSemantics.defaultFor(riskLevel));
     }
 
+    public static ToolDefinition of(String name, String description) {
+        String desc = description != null && !description.isBlank() ? description : "Tool " + name;
+        return new ToolDefinition(name, desc, "{\"type\":\"object\"}");
+    }
+
     public ToolDefinition {
         if (name == null || !name.matches("[a-zA-Z0-9_-]{1,64}")) {
             throw new IllegalArgumentException("Tool name must contain 1 to 64 letters, digits, underscores or hyphens");

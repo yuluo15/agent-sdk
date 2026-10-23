@@ -1,5 +1,7 @@
 package com.agent.agentcorelab.agent.policy;
 
+import com.agent.agentcorelab.policy.ToolPolicy;
+
 import java.util.Objects;
 import java.util.Optional;
 
@@ -10,11 +12,13 @@ import java.util.Optional;
  * @param activeTaskPolicy    Strategy for handling active task conflicts upon submission
  * @param runtimeRules        Optional system-level runtime instructions injected into the model prompt
  * @param clarificationPolicy Strategy for handling non-tool text responses after clarification resumption
+ * @param toolPolicy          Two-stage governance policy engine controlling tool authorization and output egress
  */
 public record ExecutionPolicy(
         ActiveTaskPolicy activeTaskPolicy,
         Optional<String> runtimeRules,
-        ClarificationPolicy clarificationPolicy
+        ClarificationPolicy clarificationPolicy,
+        ToolPolicy toolPolicy
 ) {
 
     /**
@@ -61,6 +65,15 @@ public record ExecutionPolicy(
         Objects.requireNonNull(activeTaskPolicy, "activeTaskPolicy");
         Objects.requireNonNull(runtimeRules, "runtimeRules");
         Objects.requireNonNull(clarificationPolicy, "clarificationPolicy");
+        toolPolicy = toolPolicy != null ? toolPolicy : ToolPolicy.defaultPolicy();
+    }
+
+    public ExecutionPolicy(
+            ActiveTaskPolicy activeTaskPolicy,
+            Optional<String> runtimeRules,
+            ClarificationPolicy clarificationPolicy
+    ) {
+        this(activeTaskPolicy, runtimeRules, clarificationPolicy, ToolPolicy.defaultPolicy());
     }
 
     public ExecutionPolicy(ActiveTaskPolicy activeTaskPolicy) {
@@ -81,28 +94,32 @@ public record ExecutionPolicy(
 
     /** Strict policy: rejects active task conflicts, strict completion checks, and uses strict audit rules. */
     public static ExecutionPolicy strict() {
-        return new ExecutionPolicy(ActiveTaskPolicy.REJECT, Optional.of(DEFAULT_RUNTIME_RULES), ClarificationPolicy.STRICT);
+        return new ExecutionPolicy(ActiveTaskPolicy.REJECT, Optional.of(DEFAULT_RUNTIME_RULES), ClarificationPolicy.STRICT, ToolPolicy.defaultPolicy());
     }
 
     /** Conversational policy: auto-resumes clarification, allows clarification sub-dialogues, and uses conversational rules. */
     public static ExecutionPolicy conversational() {
-        return new ExecutionPolicy(ActiveTaskPolicy.RESUME_IF_WAITING, Optional.of(CONVERSATIONAL_RUNTIME_RULES), ClarificationPolicy.ALLOW_SUB_DIALOGUE);
+        return new ExecutionPolicy(ActiveTaskPolicy.RESUME_IF_WAITING, Optional.of(CONVERSATIONAL_RUNTIME_RULES), ClarificationPolicy.ALLOW_SUB_DIALOGUE, ToolPolicy.defaultPolicy());
     }
 
     /** Preemptive policy: cancels waiting tasks when a new goal arrives, using default rules. */
     public static ExecutionPolicy preemptive() {
-        return new ExecutionPolicy(ActiveTaskPolicy.PREEMPT_IF_WAITING, Optional.of(DEFAULT_RUNTIME_RULES), ClarificationPolicy.ALLOW_SUB_DIALOGUE);
+        return new ExecutionPolicy(ActiveTaskPolicy.PREEMPT_IF_WAITING, Optional.of(DEFAULT_RUNTIME_RULES), ClarificationPolicy.ALLOW_SUB_DIALOGUE, ToolPolicy.defaultPolicy());
     }
 
     public ExecutionPolicy withActiveTaskPolicy(ActiveTaskPolicy newPolicy) {
-        return new ExecutionPolicy(newPolicy, this.runtimeRules, this.clarificationPolicy);
+        return new ExecutionPolicy(newPolicy, this.runtimeRules, this.clarificationPolicy, this.toolPolicy);
     }
 
     public ExecutionPolicy withRuntimeRules(String newRules) {
-        return new ExecutionPolicy(this.activeTaskPolicy, Optional.ofNullable(newRules), this.clarificationPolicy);
+        return new ExecutionPolicy(this.activeTaskPolicy, Optional.ofNullable(newRules), this.clarificationPolicy, this.toolPolicy);
     }
 
     public ExecutionPolicy withClarificationPolicy(ClarificationPolicy newClarificationPolicy) {
-        return new ExecutionPolicy(this.activeTaskPolicy, this.runtimeRules, newClarificationPolicy);
+        return new ExecutionPolicy(this.activeTaskPolicy, this.runtimeRules, newClarificationPolicy, this.toolPolicy);
+    }
+
+    public ExecutionPolicy withToolPolicy(ToolPolicy newToolPolicy) {
+        return new ExecutionPolicy(this.activeTaskPolicy, this.runtimeRules, this.clarificationPolicy, newToolPolicy);
     }
 }
