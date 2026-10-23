@@ -39,6 +39,8 @@ import com.agent.agentcorelab.tool.builtin.ClarificationTool;
 import com.agent.agentcorelab.tool.builtin.ReadWorkItemTool;
 import com.agent.agentcorelab.tool.builtin.SaveWorkNoteTool;
 import com.agent.agentcorelab.tool.builtin.UpdatePlanTool;
+import com.agent.agentcorelab.trace.AuditEvent;
+import com.agent.agentcorelab.trace.AuditTrailSpi;
 import com.agent.agentcorelab.trace.RunEvent;
 import com.agent.agentcorelab.trace.RunEventSink;
 import com.agent.agentcorelab.memory.ChatMessage;
@@ -105,48 +107,61 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
     private final UserProfileMemory userProfiles;
     private final LongSupplier nanoTime;
     private final int maxActiveRuns;
+    private final AuditTrailSpi auditTrail;
     private final ReentrantLock owner = new ReentrantLock();
     private final Map<UUID, State> runs = new ConcurrentHashMap<>();
     private volatile State current;
     private volatile boolean closed;
 
     public DefaultAgentRunner(ModelGateway model, ToolCatalog tools, RunEventSink events) {
-        this(model, tools, events, new InMemoryConversationMemory(), new InMemoryUserProfileMemory(), System::nanoTime, DEFAULT_MAX_ACTIVE_RUNS);
+        this(model, tools, events, new InMemoryConversationMemory(), new InMemoryUserProfileMemory(), System::nanoTime, DEFAULT_MAX_ACTIVE_RUNS, AuditTrailSpi.noop());
+    }
+
+    public DefaultAgentRunner(ModelGateway model, ToolCatalog tools, RunEventSink events, AuditTrailSpi auditTrail) {
+        this(model, tools, events, new InMemoryConversationMemory(), new InMemoryUserProfileMemory(), System::nanoTime, DEFAULT_MAX_ACTIVE_RUNS, auditTrail);
     }
 
     public DefaultAgentRunner(ModelGateway model, ToolCatalog tools, RunEventSink events, ConversationMemory memory) {
-        this(model, tools, events, memory, new InMemoryUserProfileMemory(), System::nanoTime, DEFAULT_MAX_ACTIVE_RUNS);
+        this(model, tools, events, memory, new InMemoryUserProfileMemory(), System::nanoTime, DEFAULT_MAX_ACTIVE_RUNS, AuditTrailSpi.noop());
     }
 
     public DefaultAgentRunner(ModelGateway model, ToolCatalog tools, RunEventSink events, ConversationMemory memory, UserProfileMemory userProfiles) {
-        this(model, tools, events, memory, userProfiles, System::nanoTime, DEFAULT_MAX_ACTIVE_RUNS);
+        this(model, tools, events, memory, userProfiles, System::nanoTime, DEFAULT_MAX_ACTIVE_RUNS, AuditTrailSpi.noop());
+    }
+
+    public DefaultAgentRunner(ModelGateway model, ToolCatalog tools, RunEventSink events, ConversationMemory memory, UserProfileMemory userProfiles, AuditTrailSpi auditTrail) {
+        this(model, tools, events, memory, userProfiles, System::nanoTime, DEFAULT_MAX_ACTIVE_RUNS, auditTrail);
     }
 
     public DefaultAgentRunner(ModelGateway model, ToolCatalog tools, RunEventSink events, int maxActiveRuns) {
-        this(model, tools, events, new InMemoryConversationMemory(), new InMemoryUserProfileMemory(), System::nanoTime, maxActiveRuns);
+        this(model, tools, events, new InMemoryConversationMemory(), new InMemoryUserProfileMemory(), System::nanoTime, maxActiveRuns, AuditTrailSpi.noop());
     }
 
     public DefaultAgentRunner(ModelGateway model, ToolCatalog tools, RunEventSink events, ConversationMemory memory, int maxActiveRuns) {
-        this(model, tools, events, memory, new InMemoryUserProfileMemory(), System::nanoTime, maxActiveRuns);
+        this(model, tools, events, memory, new InMemoryUserProfileMemory(), System::nanoTime, maxActiveRuns, AuditTrailSpi.noop());
     }
 
     public DefaultAgentRunner(ModelGateway model, ToolCatalog tools, RunEventSink events, ConversationMemory memory, UserProfileMemory userProfiles, int maxActiveRuns) {
-        this(model, tools, events, memory, userProfiles, System::nanoTime, maxActiveRuns);
+        this(model, tools, events, memory, userProfiles, System::nanoTime, maxActiveRuns, AuditTrailSpi.noop());
     }
 
     DefaultAgentRunner(ModelGateway model, ToolCatalog tools, RunEventSink events, LongSupplier nanoTime) {
-        this(model, tools, events, new InMemoryConversationMemory(), new InMemoryUserProfileMemory(), nanoTime, DEFAULT_MAX_ACTIVE_RUNS);
+        this(model, tools, events, new InMemoryConversationMemory(), new InMemoryUserProfileMemory(), nanoTime, DEFAULT_MAX_ACTIVE_RUNS, AuditTrailSpi.noop());
     }
 
     DefaultAgentRunner(ModelGateway model, ToolCatalog tools, RunEventSink events, LongSupplier nanoTime, int maxActiveRuns) {
-        this(model, tools, events, new InMemoryConversationMemory(), new InMemoryUserProfileMemory(), nanoTime, maxActiveRuns);
+        this(model, tools, events, new InMemoryConversationMemory(), new InMemoryUserProfileMemory(), nanoTime, maxActiveRuns, AuditTrailSpi.noop());
     }
 
     DefaultAgentRunner(ModelGateway model, ToolCatalog tools, RunEventSink events, ConversationMemory memory, LongSupplier nanoTime, int maxActiveRuns) {
-        this(model, tools, events, memory, new InMemoryUserProfileMemory(), nanoTime, maxActiveRuns);
+        this(model, tools, events, memory, new InMemoryUserProfileMemory(), nanoTime, maxActiveRuns, AuditTrailSpi.noop());
     }
 
     DefaultAgentRunner(ModelGateway model, ToolCatalog tools, RunEventSink events, ConversationMemory memory, UserProfileMemory userProfiles, LongSupplier nanoTime, int maxActiveRuns) {
+        this(model, tools, events, memory, userProfiles, nanoTime, maxActiveRuns, AuditTrailSpi.noop());
+    }
+
+    DefaultAgentRunner(ModelGateway model, ToolCatalog tools, RunEventSink events, ConversationMemory memory, UserProfileMemory userProfiles, LongSupplier nanoTime, int maxActiveRuns, AuditTrailSpi auditTrail) {
         this.model = model;
         this.tools = tools;
         this.events = events;
@@ -154,6 +169,11 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
         this.userProfiles = userProfiles != null ? userProfiles : new InMemoryUserProfileMemory();
         this.nanoTime = nanoTime;
         this.maxActiveRuns = maxActiveRuns > 0 ? maxActiveRuns : DEFAULT_MAX_ACTIVE_RUNS;
+        this.auditTrail = auditTrail != null ? auditTrail : AuditTrailSpi.noop();
+    }
+
+    public AuditTrailSpi auditTrail() {
+        return auditTrail;
     }
 
     @Override
@@ -236,6 +256,7 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
                 request.conversationId().ifPresent(cid ->
                         memory.append(cid, ChatMessage.user(request.goal())));
                 event(state, RunEvent.Type.RUN_STARTED, Map.of("goal", request.goal(), "agentId", agent.id()));
+                audit(state, AuditEvent.Action.RUN_STARTED, b -> b.metadata("goalLength", String.valueOf(state.currentGoal.length())));
             }, listener);
         } finally {
             unlockOwner();
@@ -482,9 +503,24 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
                 eventData.put("approverTenantId", approverContext.tenantId());
             }
             event(state, RunEvent.Type.APPROVAL_RESOLVED, eventData);
+            audit(state, AuditEvent.Action.APPROVAL_RESOLVED, b -> {
+                b.approvalId(approvalId)
+                 .toolName(call.name())
+                 .callId(call.callId())
+                 .argumentsSha256(ApprovalBinding.computeArgumentsDigest(call.argumentsJson()))
+                 .approvalDecision("APPROVED");
+                if (approverContext != null) {
+                    b.approverPrincipal(approverContext.userPrincipal())
+                     .approverTenantId(approverContext.tenantId());
+                }
+            });
 
             event(state, RunEvent.Type.TOOL_STARTED, Map.of("callId", call.callId(), "tool", call.name(),
                     "argumentsSha256", digest(call.argumentsJson())));
+            audit(state, AuditEvent.Action.TOOL_STARTED, b -> b
+                    .toolName(call.name())
+                    .callId(call.callId())
+                    .argumentsSha256(ApprovalBinding.computeArgumentsDigest(call.argumentsJson())));
             safeEmit(listener, RunStreamChunk.toolStarted(call.callId(), call.name(), Map.of("callId", call.callId())));
             ToolContext context = new ToolContext(state.id, state.request.workspace(),
                     Instant.now().plus(remaining(state)), state::isCancellationRequested,
@@ -500,6 +536,12 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
                     state.currentToolThread.set(null);
                     state.toolNanos += Math.max(0L, nanoTime.getAsLong() - toolStart);
                 }
+                ToolOutcome executedOutcome = outcome;
+                audit(state, AuditEvent.Action.TOOL_EXECUTED, b -> b
+                        .toolName(call.name())
+                        .callId(call.callId())
+                        .argumentsSha256(ApprovalBinding.computeArgumentsDigest(call.argumentsJson()))
+                        .metadata("outcome", executedOutcome instanceof ToolOutcome.Success ? "SUCCESS" : "FAILURE"));
             } catch (CancellationException | ActiveTimeExceededException ex) {
                 boolean cancelled = ex instanceof CancellationException;
                 event(state, RunEvent.Type.TOOL_FINISHED, Map.of("callId", call.callId(), "tool", call.name(),
@@ -575,6 +617,18 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
                 eventData.put("approverTenantId", approverContext.tenantId());
             }
             event(state, RunEvent.Type.APPROVAL_RESOLVED, eventData);
+            audit(state, AuditEvent.Action.APPROVAL_RESOLVED, b -> {
+                b.approvalId(approvalId)
+                 .toolName(call.name())
+                 .callId(call.callId())
+                 .argumentsSha256(ApprovalBinding.computeArgumentsDigest(call.argumentsJson()))
+                 .approvalDecision("REJECTED")
+                 .policyReason(rejectionReason);
+                if (approverContext != null) {
+                    b.approverPrincipal(approverContext.userPrincipal())
+                     .approverTenantId(approverContext.tenantId());
+                }
+            });
 
             ToolOutcome outcome = new ToolOutcome.Failure("ACTION_REJECTED",
                     "User rejected action '" + call.name() + "': " + rejectionReason, false);
@@ -650,6 +704,13 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
                         "tool", call.name(),
                         "decision", "SUPERSEDED"
                 ));
+                audit(state, AuditEvent.Action.APPROVAL_RESOLVED, b -> b
+                        .approvalId(approvalId)
+                        .toolName(call.name())
+                        .callId(call.callId())
+                        .argumentsSha256(ApprovalBinding.computeArgumentsDigest(call.argumentsJson()))
+                        .approvalDecision("SUPERSEDED")
+                        .policyReason("High-risk action was superseded by user goal revision"));
                 accept(state, call, new ToolOutcome.Failure("APPROVAL_SUPERSEDED",
                         "High-risk action was superseded by user goal revision", false), listener);
                 if (calls != null && index + 1 < calls.size()) {
@@ -1006,6 +1067,14 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
                             "reason", deny.reason(),
                             "errorCode", deny.errorCode()
                     ));
+                    audit(state, AuditEvent.Action.POLICY_DENIED, b -> b
+                            .toolName(call.name())
+                            .callId(call.callId())
+                            .argumentsSha256(ApprovalBinding.computeArgumentsDigest(call.argumentsJson()))
+                            .policyDecision("DENY")
+                            .policyReason(deny.reason())
+                            .metadata("errorCode", deny.errorCode())
+                            .metadata("terminal", String.valueOf(deny.terminal())));
                 } else if (authDecision instanceof AuthDecision.RequireApproval reqApproval) {
                     String approvalId = UUID.randomUUID().toString();
                     String description = reqApproval.reason();
@@ -1048,14 +1117,33 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
                                 "policyVersion", reqApproval.policyVersion(),
                                 "requiredRole", reqApproval.requiredRole()
                         ));
+                        audit(state, AuditEvent.Action.APPROVAL_REQUESTED, b -> b
+                                .toolName(call.name())
+                                .callId(call.callId())
+                                .argumentsSha256(binding.argumentsSha256())
+                                .policyDecision("REQUIRE_APPROVAL")
+                                .policyReason(reqApproval.reason())
+                                .policyVersion(reqApproval.policyVersion())
+                                .requiredRole(reqApproval.requiredRole())
+                                .approvalId(approvalId));
                         safeEmit(listener, RunStreamChunk.waitingApproval(req));
                     }
                     return;
+                } else {
+                    audit(state, AuditEvent.Action.POLICY_EVALUATED, b -> b
+                            .toolName(call.name())
+                            .callId(call.callId())
+                            .argumentsSha256(ApprovalBinding.computeArgumentsDigest(call.argumentsJson()))
+                            .policyDecision("ALLOW"));
                 }
             }
             if (outcome == null) {
                 event(state, RunEvent.Type.TOOL_STARTED, Map.of("callId", call.callId(), "tool", call.name(),
                         "argumentsSha256", digest(call.argumentsJson())));
+                audit(state, AuditEvent.Action.TOOL_STARTED, b -> b
+                        .toolName(call.name())
+                        .callId(call.callId())
+                        .argumentsSha256(ApprovalBinding.computeArgumentsDigest(call.argumentsJson())));
                 safeEmit(listener, RunStreamChunk.toolStarted(call.callId(), call.name(), Map.of("callId", call.callId())));
                 ToolContext context = new ToolContext(state.id, state.request.workspace(),
                         Instant.now().plus(remaining(state)), state::isCancellationRequested,
@@ -1070,6 +1158,12 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
                         state.currentToolThread.set(null);
                         state.toolNanos += Math.max(0L, nanoTime.getAsLong() - toolStart);
                     }
+                    ToolOutcome executedOutcome = outcome;
+                    audit(state, AuditEvent.Action.TOOL_EXECUTED, b -> b
+                            .toolName(call.name())
+                            .callId(call.callId())
+                            .argumentsSha256(ApprovalBinding.computeArgumentsDigest(call.argumentsJson()))
+                            .metadata("outcome", executedOutcome instanceof ToolOutcome.Success ? "SUCCESS" : "FAILURE"));
                 } catch (CancellationException | ActiveTimeExceededException ex) {
                     boolean cancelled = ex instanceof CancellationException;
                     event(state, RunEvent.Type.TOOL_FINISHED, Map.of("callId", call.callId(), "tool", call.name(),
@@ -1126,6 +1220,11 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
                         "tool", call.name(),
                         "reason", redact.reason()
                 ));
+                audit(state, AuditEvent.Action.OUTPUT_REDACTED, b -> b
+                        .toolName(call.name())
+                        .callId(call.callId())
+                        .policyDecision("REDACT")
+                        .policyReason(redact.reason()));
             } else if (outputDecision instanceof OutputDecision.DenyOutput denyOutput) {
                 effectiveOutcome = new ToolOutcome.Failure(denyOutput.errorCode(), denyOutput.reason(), false);
                 event(state, RunEvent.Type.OUTPUT_BLOCKED, Map.of(
@@ -1134,6 +1233,12 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
                         "reason", denyOutput.reason(),
                         "errorCode", denyOutput.errorCode()
                 ));
+                audit(state, AuditEvent.Action.OUTPUT_BLOCKED, b -> b
+                        .toolName(call.name())
+                        .callId(call.callId())
+                        .policyDecision("DENY_OUTPUT")
+                        .policyReason(denyOutput.reason())
+                        .metadata("errorCode", denyOutput.errorCode()));
             }
         }
 
@@ -1433,6 +1538,9 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
         }
         try {
             event(state, RunEvent.Type.RUN_FINISHED, Map.of("status", state.status.name(), "reason", state.reason));
+            audit(state, AuditEvent.Action.RUN_FINISHED, b -> b
+                    .metadata("status", state.status.name())
+                    .metadata("reason", state.reason != null ? state.reason : ""));
         } catch (RuntimeException ex) {
             failWithoutEvent(state, "STORAGE_FAILED", "The final run event could not be recorded");
         }
@@ -1466,6 +1574,28 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
             details.put("agentId", state.spec.id());
         }
         events.publish(new RunEvent(++state.sequence, state.id, Instant.now(), type, ToolJson.write(details)));
+    }
+
+    private void audit(State state, AuditEvent.Action action, Consumer<AuditEvent.Builder> customizer) {
+        if (state == null || state.auditTrail == null) {
+            return;
+        }
+        try {
+            TrustedContext ctx = state.request != null ? state.request.resolvedTrustedContext() : TrustedContext.anonymous();
+            AuditEvent.Builder builder = AuditEvent.builder()
+                    .action(action)
+                    .runId(state.id)
+                    .agentId(state.spec != null ? state.spec.id() : "")
+                    .traceId(ctx.traceId())
+                    .tenantId(ctx.tenantId())
+                    .userPrincipal(ctx.userPrincipal());
+            if (customizer != null) {
+                customizer.accept(builder);
+            }
+            state.auditTrail.append(builder.build());
+        } catch (Exception ignored) {
+            // Failure in external audit trail must never disrupt execution flow
+        }
     }
 
     private RunMetrics metrics(State state) {
@@ -1720,12 +1850,15 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
             return closed || cancelled.get() || request.cancellationRequested().getAsBoolean();
         }
 
+        private final AuditTrailSpi auditTrail;
+
         private State(AgentSpec spec, RunRequest request, ToolExecutor executor, ToolCatalog catalog, ExecutionPolicy policy) {
             this.spec = spec;
             this.request = request;
             this.executor = executor;
             this.catalog = catalog;
             this.policy = policy;
+            this.auditTrail = policy.auditTrail().orElse(DefaultAgentRunner.this.auditTrail != null ? DefaultAgentRunner.this.auditTrail : AuditTrailSpi.noop());
             this.currentGoal = request.goal();
             this.taskBrief = request.initialBrief().orElseGet(() -> TaskBrief.of(request.goal()));
             this.taskPlan = TaskPlan.empty(this.taskBrief.goalVersion());

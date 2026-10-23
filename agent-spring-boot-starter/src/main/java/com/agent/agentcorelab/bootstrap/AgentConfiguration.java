@@ -12,6 +12,7 @@ import com.agent.agentcorelab.model.ModelGateway;
 import com.agent.agentcorelab.scenario.ScenarioPlugin;
 import com.agent.agentcorelab.scenario.ScenarioRegistry;
 import com.agent.agentcorelab.tool.ToolCatalog;
+import com.agent.agentcorelab.trace.AuditTrailSpi;
 import com.agent.agentcorelab.trace.CompositeRunEventSink;
 import com.agent.agentcorelab.trace.JsonlRunEventSink;
 import com.agent.agentcorelab.trace.RunEventListener;
@@ -80,22 +81,30 @@ public class AgentConfiguration {
     }
 
     @Bean
+    @ConditionalOnMissingBean(AuditTrailSpi.class)
+    public AuditTrailSpi auditTrail() {
+        return AuditTrailSpi.noop();
+    }
+
+    @Bean
     @ConditionalOnBean(ModelGateway.class)
     @ConditionalOnMissingBean(AgentRunnerFactory.class)
     public AgentRunnerFactory agentRunnerFactory(ModelGateway model, ToolCatalog tools, RunEventSink events,
                                                  ObjectProvider<RunEventListener> listenersProvider,
                                                  ObjectProvider<ConversationMemory> memoryProvider,
-                                                 ObjectProvider<com.agent.agentcorelab.memory.UserProfileMemory> userProfileProvider) {
+                                                 ObjectProvider<com.agent.agentcorelab.memory.UserProfileMemory> userProfileProvider,
+                                                 ObjectProvider<AuditTrailSpi> auditTrailProvider) {
         ConversationMemory memory = memoryProvider.getIfAvailable(InMemoryConversationMemory::new);
         com.agent.agentcorelab.memory.UserProfileMemory profiles = userProfileProvider.getIfAvailable(
                 com.agent.agentcorelab.memory.InMemoryUserProfileMemory::new);
+        AuditTrailSpi auditTrail = auditTrailProvider.getIfAvailable(AuditTrailSpi::noop);
         List<RunEventListener> listeners = listenersProvider.orderedStream().toList();
         RunEventSink effectiveEvents = events;
         if (!listeners.isEmpty() && !(events instanceof CompositeRunEventSink)) {
             effectiveEvents = new CompositeRunEventSink(events, listeners);
         }
         RunEventSink finalEvents = effectiveEvents;
-        return () -> new DefaultAgentRunner(model, tools, finalEvents, memory, profiles);
+        return () -> new DefaultAgentRunner(model, tools, finalEvents, memory, profiles, auditTrail);
     }
 
     @Bean

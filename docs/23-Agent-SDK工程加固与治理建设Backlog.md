@@ -86,7 +86,7 @@ flowchart TD
 | **04** | **P1** | **可信上下文（TrustedContext）注入** | `TrustedContext.java`<br>`RunRequest.java`<br>`ToolContext.java` | **✅ 已完成** | 宿主安全注入租户 `tenantId`、主体 `userPrincipal`、权限集 `scopes` 与 `traceId`，只读不可变设计；模型与参数不可伪造；`@AgentTool` 支持隐式注入；323 个用例 100% 通过。 |
 | **05** | **P1** | **双阶段策略执行引擎（ToolPolicy SPI）** | `ToolPolicy.java`<br>`DefaultAgentRunner.java` | **✅ 已完成** | 执行前 `beforeExecute`（`ALLOW / DENY / REQUIRE_APPROVAL`）；执行后出域保护 `afterExecute`（`ALLOW_OUTPUT / REDACT / DENY_OUTPUT`）；单测覆盖策略放行、拦截阻断、挂起审批与出域敏感信息脱敏全场景；347 个用例 100% 通过。 |
 | **06** | **P1** | **防篡改与防重放审批绑定** | `ApprovalBinding.java`<br>`DefaultAgentRunner.java`<br>`ApprovalException.java` | **✅ 已完成** | 强绑定申请人、审批角色、租户、工具名/callId、参数规范化 SHA-256 哈希、TTL 与原子 CAS 单次消费标志；全面覆盖参数篡改拦截、重放拦截、超时拦截、跨租户拦截与越权审批人拦截；323 个用例 100% 通过。 |
-| **07** | **P1** | **只追加企业审计日志契约** | `AuditTrailSpi.java`<br>`DefaultAgentRunner.java` | **⏳ 待开始** | 规范只追加（Append-Only）审计事件契约；记录治理决策链路；不写完整敏感 Prompt；明确存储防篡改由外接系统承担。 |
+| **07** | **P1** | **只追加企业审计日志契约** | `AuditTrailSpi.java`<br>`DefaultAgentRunner.java` | **✅ 已完成** | 规范只追加（Append-Only）审计事件契约；记录治理决策链路；不写完整敏感 Prompt；明确存储防篡改由外接系统承担；329 测 100% 通过。 |
 | **--** | **Gate A**| **合成高风险攻防验证（L1 评定）** | `SyntheticGovernanceTests.java` | **⏳ 待开始** | 针对“酒店退改签与违约金减免”沙箱场景，验证 8 项安全红线均为 0 违规，证明最小治理闭环成立。 |
 | **08** | **P2** | **静态挂起点持久化（Checkpoint SPI）** | `CheckpointSpi.java`<br>`DefaultAgentRunner.java` | **⏳ 待开始** | 严格收缩边界：仅支持 `WAITING_INPUT` 与 `WAITING_APPROVAL` 两类静止状态；提供轻量快照存储与恢复；支持乐观锁版本控制。 |
 | **09** | **P3** | **场景级候选工具发现与最小权限组装** | `McpAutoConfiguration.java`<br>`ToolCatalog.java` | **⏳ 待开始** | 否决全局 ToolCatalog 倾倒；Spring 只发现候选工具 Bean；每个 `AgentSpec` 或业务场景根据白名单与租户上下文独立组装安全目录。 |
@@ -206,12 +206,13 @@ flowchart TD
 * **验收标准**：单测覆盖参数篡改拦截、审批重放拦截、过期审批拦截与越权审批人拦截。
 
 #### 任务 07：只追加企业审计日志契约（Append-Only Audit SPI）
-* **涉及代码**：`com.agent.agentcorelab.trace.AuditTrailSpi`、`DefaultAgentRunner`
+* **状态**：`✅ 已完成`
+* **涉及代码**：`com.agent.agentcorelab.trace.AuditTrailSpi`、`AuditEvent`、`InMemoryAuditTrail`、`DefaultAgentRunner`
 * **实施方案**：
-  1. 建立只追加审计契约：仅支持 `append(AuditEvent event)`，SDK 绝不暴露任何修改或删除旧审计记录的接口；
-  2. 规范化审计事件结构：明确记录时间戳、`traceId`、`tenantId`、操作人、大模型调用的工具名、参数规范化摘要、策略判定依据、审批人主体与审批结果；
-  3. 隐私保护红线：审计事件中只记录关键决策依据与参数指纹，禁止完整记录大模型的自由 Prompt 与用户敏感正文。
-* **验收标准**：单测验证全生命周期治理操作产生的审计日志因果有序、字段完备。
+  1. 建立只追加审计契约：仅支持 `append(AuditEvent event)`，SDK 绝不暴露任何修改或删除旧审计记录的接口，提供 `noop()`、`inMemory()` 与异常隔离的 `composite(...)`；
+  2. 规范化审计事件结构：明确记录时间戳、`traceId`、`tenantId`、操作人、大模型调用的工具名、参数规范化摘要（SHA-256 指纹）、策略判定依据、审批人主体与审批结果；
+  3. 隐私保护红线：审计事件中只记录关键决策依据与规范化参数指纹，禁止完整记录大模型的自由 Prompt 与用户敏感正文。
+* **验收标准**：单测覆盖全生命周期因果有序审计、策略拦截审计、审批驳回审计、参数篡改防护、敏感信息红线验证与复合下游故障隔离；329 个用例 100% 通过。
 
 ---
 

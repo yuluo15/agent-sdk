@@ -1,6 +1,7 @@
 package com.agent.agentcorelab.agent.policy;
 
 import com.agent.agentcorelab.policy.ToolPolicy;
+import com.agent.agentcorelab.trace.AuditTrailSpi;
 
 import java.util.Objects;
 import java.util.Optional;
@@ -13,12 +14,14 @@ import java.util.Optional;
  * @param runtimeRules        Optional system-level runtime instructions injected into the model prompt
  * @param clarificationPolicy Strategy for handling non-tool text responses after clarification resumption
  * @param toolPolicy          Two-stage governance policy engine controlling tool authorization and output egress
+ * @param auditTrail          Optional append-only enterprise audit trail SPI
  */
 public record ExecutionPolicy(
         ActiveTaskPolicy activeTaskPolicy,
         Optional<String> runtimeRules,
         ClarificationPolicy clarificationPolicy,
-        ToolPolicy toolPolicy
+        ToolPolicy toolPolicy,
+        Optional<AuditTrailSpi> auditTrail
 ) {
 
     /**
@@ -66,6 +69,16 @@ public record ExecutionPolicy(
         Objects.requireNonNull(runtimeRules, "runtimeRules");
         Objects.requireNonNull(clarificationPolicy, "clarificationPolicy");
         toolPolicy = toolPolicy != null ? toolPolicy : ToolPolicy.defaultPolicy();
+        auditTrail = auditTrail != null ? auditTrail : Optional.empty();
+    }
+
+    public ExecutionPolicy(
+            ActiveTaskPolicy activeTaskPolicy,
+            Optional<String> runtimeRules,
+            ClarificationPolicy clarificationPolicy,
+            ToolPolicy toolPolicy
+    ) {
+        this(activeTaskPolicy, runtimeRules, clarificationPolicy, toolPolicy, Optional.empty());
     }
 
     public ExecutionPolicy(
@@ -73,7 +86,7 @@ public record ExecutionPolicy(
             Optional<String> runtimeRules,
             ClarificationPolicy clarificationPolicy
     ) {
-        this(activeTaskPolicy, runtimeRules, clarificationPolicy, ToolPolicy.defaultPolicy());
+        this(activeTaskPolicy, runtimeRules, clarificationPolicy, ToolPolicy.defaultPolicy(), Optional.empty());
     }
 
     public ExecutionPolicy(ActiveTaskPolicy activeTaskPolicy) {
@@ -108,18 +121,22 @@ public record ExecutionPolicy(
     }
 
     public ExecutionPolicy withActiveTaskPolicy(ActiveTaskPolicy newPolicy) {
-        return new ExecutionPolicy(newPolicy, this.runtimeRules, this.clarificationPolicy, this.toolPolicy);
+        return new ExecutionPolicy(newPolicy, this.runtimeRules, this.clarificationPolicy, this.toolPolicy, this.auditTrail);
     }
 
     public ExecutionPolicy withRuntimeRules(String newRules) {
-        return new ExecutionPolicy(this.activeTaskPolicy, Optional.ofNullable(newRules), this.clarificationPolicy, this.toolPolicy);
+        return new ExecutionPolicy(this.activeTaskPolicy, Optional.ofNullable(newRules), this.clarificationPolicy, this.toolPolicy, this.auditTrail);
     }
 
     public ExecutionPolicy withClarificationPolicy(ClarificationPolicy newClarificationPolicy) {
-        return new ExecutionPolicy(this.activeTaskPolicy, this.runtimeRules, newClarificationPolicy, this.toolPolicy);
+        return new ExecutionPolicy(this.activeTaskPolicy, this.runtimeRules, newClarificationPolicy, this.toolPolicy, this.auditTrail);
     }
 
     public ExecutionPolicy withToolPolicy(ToolPolicy newToolPolicy) {
-        return new ExecutionPolicy(this.activeTaskPolicy, this.runtimeRules, this.clarificationPolicy, newToolPolicy);
+        return new ExecutionPolicy(this.activeTaskPolicy, this.runtimeRules, this.clarificationPolicy, newToolPolicy, this.auditTrail);
+    }
+
+    public ExecutionPolicy withAuditTrail(AuditTrailSpi newAuditTrail) {
+        return new ExecutionPolicy(this.activeTaskPolicy, this.runtimeRules, this.clarificationPolicy, this.toolPolicy, Optional.ofNullable(newAuditTrail));
     }
 }
