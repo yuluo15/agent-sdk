@@ -118,4 +118,35 @@ public record TaskPlan(
     public TaskPlan withNextRevision(String updateReason, List<TaskStep> newSteps) {
         return new TaskPlan(this.planRevision + 1, this.goalVersion, updateReason, newSteps);
     }
+
+    /**
+     * Checks if the plan execution has reached a self-consistent completed state.
+     * <p>
+     * Returns true if:
+     * <ul>
+     *   <li>The plan is non-empty;</li>
+     *   <li>No step remains in {@link TaskStep.Status#PENDING}, {@link TaskStep.Status#ACTIVE}, or {@link TaskStep.Status#BLOCKED};</li>
+     *   <li>At least one step was successfully completed ({@link TaskStep.Status#DONE});</li>
+     *   <li>Any {@link TaskStep.Status#DROPPED} steps have valid reasons (which is enforced on update).</li>
+     * </ul>
+     *
+     * @return true if the plan is consistently satisfied
+     */
+    public boolean isSatisfied() {
+        if (steps.isEmpty()) {
+            return false;
+        }
+        boolean hasDone = false;
+        for (TaskStep step : steps) {
+            if (step.status() == TaskStep.Status.PENDING
+                    || step.status() == TaskStep.Status.ACTIVE
+                    || step.status() == TaskStep.Status.BLOCKED) {
+                return false;
+            }
+            if (step.status() == TaskStep.Status.DONE) {
+                hasDone = true;
+            }
+        }
+        return hasDone;
+    }
 }

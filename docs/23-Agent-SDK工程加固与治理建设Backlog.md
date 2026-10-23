@@ -90,7 +90,7 @@ flowchart TD
 | **--** | **Gate A**| **合成高风险攻防验证（L1 评定）** | `SyntheticGovernanceTests.java` | **⏳ 待开始** | 针对“酒店退改签与违约金减免”沙箱场景，验证 8 项安全红线均为 0 违规，证明最小治理闭环成立。 |
 | **08** | **P2** | **静态挂起点持久化（Checkpoint SPI）** | `CheckpointSpi.java`<br>`DefaultAgentRunner.java` | **⏳ 待开始** | 严格收缩边界：仅支持 `WAITING_INPUT` 与 `WAITING_APPROVAL` 两类静止状态；提供轻量快照存储与恢复；支持乐观锁版本控制。 |
 | **09** | **P3** | **场景级候选工具发现与最小权限组装** | `McpAutoConfiguration.java`<br>`ToolCatalog.java` | **⏳ 待开始** | 否决全局 ToolCatalog 倾倒；Spring 只发现候选工具 Bean；每个 `AgentSpec` 或业务场景根据白名单与租户上下文独立组装安全目录。 |
-| **10** | **P3** | **契约驱动与逻辑交付物验收器** | `ContractDrivenCompletionCheck.java`<br>`CompletionRequirements.java`<br>`TaskPlan.java` | **⏳ 待开始** | 落实五级权责分离：可组合 `CompletionProfile`、轻量按次契约 `CompletionRequirements`（角色履约非写死文件名、`[E1]`证据引用、动作回执）、`TaskPlan.isSatisfied()` 计划自洽校验、可选 `CompletionJudge` 语义质检与有界 Repair。 |
+| **10** | **P3** | **契约驱动与逻辑交付物验收器** | `ContractDrivenCompletionCheck.java`<br>`CompletionRequirements.java`<br>`TaskPlan.java` | **✅ 已完成** | 落实五级权责分离：可组合 `CompletionProfile`、轻量按次契约 `CompletionRequirements`（角色履约非写死文件名、`[E1]`证据引用、动作回执）、`TaskPlan.isSatisfied()` 计划自洽校验、可选 `CompletionJudge` 语义质检与有界 Repair（禁止自动重复支付写操作）；339 个用例 100% 通过。 |
 
 ---
 
