@@ -1,0 +1,86 @@
+package com.agent.agentcorelab.agent.run;
+
+import com.agent.agentcorelab.agent.approval.ApprovalBinding;
+import com.agent.agentcorelab.agent.plan.TaskBrief;
+import com.agent.agentcorelab.agent.plan.TaskPlan;
+import com.agent.agentcorelab.tool.ToolCall;
+import com.agent.agentcorelab.tool.ToolOutcome;
+import com.agent.agentcorelab.workspace.Artifact;
+
+import java.util.List;
+import java.util.Optional;
+import java.util.UUID;
+
+public record RunSnapshot(
+        UUID runId,
+        String agentId,
+        String goal,
+        RunStatus status,
+        List<Observation> observations,
+        List<Artifact> artifacts,
+        RunMetrics metrics,
+        Optional<PendingQuestion> pendingQuestion,
+        Optional<TaskBrief> taskBrief,
+        Optional<TaskPlan> taskPlan,
+        Optional<ApprovalRequest> pendingApproval,
+        Optional<ApprovalBinding> approvalBinding
+) {
+    public RunSnapshot(
+            UUID runId,
+            String agentId,
+            String goal,
+            RunStatus status,
+            List<Observation> observations,
+            List<Artifact> artifacts,
+            RunMetrics metrics,
+            Optional<PendingQuestion> pendingQuestion
+    ) {
+        this(runId, agentId, goal, status, observations, artifacts, metrics, pendingQuestion,
+                Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty());
+    }
+
+    public RunSnapshot(
+            UUID runId,
+            String agentId,
+            String goal,
+            RunStatus status,
+            List<Observation> observations,
+            List<Artifact> artifacts,
+            RunMetrics metrics,
+            Optional<PendingQuestion> pendingQuestion,
+            Optional<TaskBrief> taskBrief,
+            Optional<TaskPlan> taskPlan
+    ) {
+        this(runId, agentId, goal, status, observations, artifacts, metrics, pendingQuestion,
+                taskBrief, taskPlan, Optional.empty(), Optional.empty());
+    }
+
+    public RunSnapshot(
+            UUID runId,
+            String agentId,
+            String goal,
+            RunStatus status,
+            List<Observation> observations,
+            List<Artifact> artifacts,
+            RunMetrics metrics,
+            Optional<PendingQuestion> pendingQuestion,
+            Optional<TaskBrief> taskBrief,
+            Optional<TaskPlan> taskPlan,
+            Optional<ApprovalRequest> pendingApproval
+    ) {
+        this(runId, agentId, goal, status, observations, artifacts, metrics, pendingQuestion,
+                taskBrief, taskPlan, pendingApproval, Optional.empty());
+    }
+
+    public RunSnapshot {
+        observations = List.copyOf(observations != null ? observations : List.of());
+        artifacts = List.copyOf(artifacts != null ? artifacts : List.of());
+        taskBrief = taskBrief != null ? taskBrief : Optional.empty();
+        taskPlan = taskPlan != null ? taskPlan : Optional.empty();
+        pendingApproval = pendingApproval != null ? pendingApproval : Optional.empty();
+        approvalBinding = approvalBinding != null ? approvalBinding : Optional.empty();
+    }
+
+    public record Observation(ToolCall call, ToolOutcome outcome) {
+    }
+}
