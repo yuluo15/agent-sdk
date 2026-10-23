@@ -7,14 +7,18 @@ param (
 
 $ErrorActionPreference = "Stop"
 
+Set-Location $PSScriptRoot
+
 Write-Host "==================================================" -ForegroundColor Cyan
 Write-Host " Agent SDK Local Verification Gate (JDK 21) " -ForegroundColor Cyan
 Write-Host "==================================================" -ForegroundColor Cyan
 
 # 1. Environment & JDK 21 Check
-if (-not $env:JAVA_HOME -or -not (Test-Path "$env:JAVA_HOME\bin\javac.exe")) {
+$currVer = if ($env:JAVA_HOME -and (Test-Path "$env:JAVA_HOME\bin\java.exe")) { cmd.exe /c "`"$env:JAVA_HOME\bin\java.exe`" -version 2>&1" } else { "" }
+if ($currVer -notmatch "21\.") {
     if (Test-Path "D:\Java\jdk-21.0.8") {
         $env:JAVA_HOME = "D:\Java\jdk-21.0.8"
+        $env:PATH = "D:\Java\jdk-21.0.8\bin;D:\Java\apache-maven-3.9.0\bin;$env:PATH"
     }
 }
 
@@ -49,7 +53,7 @@ Write-Host " -> Secret scan passed: 0 credentials detected." -ForegroundColor Gr
 
 # 3. Maven Reactor Build & Full Test Suite
 Write-Host "[3/3] Executing Maven reactor build and test suites..." -ForegroundColor Yellow
-$mvnCmd = if ($SkipClean) { "mvn -B test" } else { "mvn -B clean test" }
+$mvnCmd = if ($SkipClean) { "mvn -f `"$PSScriptRoot\pom.xml`" -B test" } else { "mvn -f `"$PSScriptRoot\pom.xml`" -B clean test" }
 Write-Host " -> Running: $mvnCmd" -ForegroundColor Gray
 
 $ErrorActionPreference = "Continue"

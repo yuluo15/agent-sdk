@@ -1,6 +1,7 @@
 package com.agent.agentcorelab.tool.annotation;
 
 import com.agent.agentcorelab.tool.RiskLevel;
+import com.agent.agentcorelab.tool.SemanticHint;
 
 import java.lang.annotation.Documented;
 import java.lang.annotation.ElementType;
@@ -38,4 +39,28 @@ public @interface AgentTool {
      * and request human approval.
      */
     RiskLevel riskLevel() default RiskLevel.READ_ONLY;
+
+    /**
+     * Governance semantic hint: whether this tool is read-only.
+     * Defaults to {@link SemanticHint#UNKNOWN} (inferred from {@link #riskLevel()} if unspecified).
+     */
+    SemanticHint readOnly() default SemanticHint.UNKNOWN;
+
+    /**
+     * Governance semantic hint: whether this tool performs destructive mutations.
+     * Defaults to {@link SemanticHint#UNKNOWN} (inferred from {@link #riskLevel()} if unspecified).
+     */
+    SemanticHint destructive() default SemanticHint.UNKNOWN;
+
+    /**
+     * Governance semantic hint: whether this tool execution is idempotent.
+     * Defaults to {@link SemanticHint#UNKNOWN}.
+     */
+    SemanticHint idempotent() default SemanticHint.UNKNOWN;
+
+    /**
+     * Governance semantic hint: whether this tool interacts with an open-world external system.
+     * Defaults to {@link SemanticHint#UNKNOWN}.
+     */
+    SemanticHint openWorld() default SemanticHint.UNKNOWN;
 }

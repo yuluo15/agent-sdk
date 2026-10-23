@@ -40,4 +40,26 @@ public final class ToolCatalog {
     public List<ToolDefinition> definitions() {
         return tools.values().stream().map(Tool::definition).toList();
     }
+
+    /**
+     * Returns a new {@link ToolCatalog} with governance semantics overridden for specified tools.
+     * Tools not present in the overrides map remain unchanged.
+     *
+     * @param overrides map of tool names to host override semantics
+     * @return new ToolCatalog with overrides applied
+     */
+    public ToolCatalog withSemanticsOverrides(Map<String, ToolSemantics> overrides) {
+        if (overrides == null || overrides.isEmpty()) {
+            return this;
+        }
+        List<Tool> transformed = this.tools.values().stream().map(tool -> {
+            ToolSemantics override = overrides.get(tool.definition().name());
+            if (override != null) {
+                ToolDefinition newDef = tool.definition().withOverriddenSemantics(override);
+                return new OverriddenTool(tool, newDef);
+            }
+            return tool;
+        }).toList();
+        return new ToolCatalog(transformed);
+    }
 }

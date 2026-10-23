@@ -2,11 +2,13 @@ package com.agent.agentcorelab.tool.annotation;
 
 import com.agent.agentcorelab.tool.ActiveTimeExceededException;
 import com.agent.agentcorelab.tool.RiskLevel;
+import com.agent.agentcorelab.tool.SemanticHint;
 import com.agent.agentcorelab.tool.Tool;
 import com.agent.agentcorelab.tool.ToolContext;
 import com.agent.agentcorelab.tool.ToolDefinition;
 import com.agent.agentcorelab.tool.ToolJson;
 import com.agent.agentcorelab.tool.ToolOutcome;
+import com.agent.agentcorelab.tool.ToolSemantics;
 import com.fasterxml.jackson.databind.JavaType;
 import com.fasterxml.jackson.databind.JsonNode;
 
@@ -49,7 +51,24 @@ public final class AnnotatedTool implements Tool {
 
         String inputSchema = JsonSchemaGenerator.generateSchema(method);
         RiskLevel riskLevel = annotation.riskLevel() != null ? annotation.riskLevel() : RiskLevel.READ_ONLY;
-        this.definition = new ToolDefinition(name, description, inputSchema, riskLevel);
+
+        ToolSemantics semantics;
+        if (annotation.readOnly() != SemanticHint.UNKNOWN
+                || annotation.destructive() != SemanticHint.UNKNOWN
+                || annotation.idempotent() != SemanticHint.UNKNOWN
+                || annotation.openWorld() != SemanticHint.UNKNOWN) {
+            ToolSemantics defaultSemantics = ToolSemantics.defaultFor(riskLevel);
+            semantics = new ToolSemantics(
+                    annotation.readOnly() != SemanticHint.UNKNOWN ? annotation.readOnly() : defaultSemantics.readOnly(),
+                    annotation.destructive() != SemanticHint.UNKNOWN ? annotation.destructive() : defaultSemantics.destructive(),
+                    annotation.idempotent() != SemanticHint.UNKNOWN ? annotation.idempotent() : defaultSemantics.idempotent(),
+                    annotation.openWorld() != SemanticHint.UNKNOWN ? annotation.openWorld() : defaultSemantics.openWorld()
+            );
+        } else {
+            semantics = ToolSemantics.defaultFor(riskLevel);
+        }
+
+        this.definition = new ToolDefinition(name, description, inputSchema, riskLevel, semantics);
 
         List<ParamDescriptor> params = new ArrayList<>();
         Set<String> seenNames = new HashSet<>();

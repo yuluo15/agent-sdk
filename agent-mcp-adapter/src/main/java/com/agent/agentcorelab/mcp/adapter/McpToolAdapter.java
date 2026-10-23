@@ -10,6 +10,7 @@ import com.agent.agentcorelab.tool.Tool;
 import com.agent.agentcorelab.tool.ToolContext;
 import com.agent.agentcorelab.tool.ToolDefinition;
 import com.agent.agentcorelab.tool.ToolOutcome;
+import com.agent.agentcorelab.tool.ToolSemantics;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -37,6 +38,14 @@ public final class McpToolAdapter implements Tool {
     }
 
     public McpToolAdapter(McpClient client, McpTool mcpTool, String prefix, RiskLevel riskLevel, ObjectMapper mapper) {
+        this(client, mcpTool, prefix, riskLevel, null, mapper);
+    }
+
+    public McpToolAdapter(McpClient client, McpTool mcpTool, String prefix, RiskLevel riskLevel, ToolSemantics semantics) {
+        this(client, mcpTool, prefix, riskLevel, semantics, McpJsonRpcCodec.mapper());
+    }
+
+    public McpToolAdapter(McpClient client, McpTool mcpTool, String prefix, RiskLevel riskLevel, ToolSemantics semantics, ObjectMapper mapper) {
         this.client = Objects.requireNonNull(client, "client cannot be null");
         Objects.requireNonNull(mcpTool, "mcpTool cannot be null");
         this.mapper = mapper != null ? mapper : McpJsonRpcCodec.mapper();
@@ -48,11 +57,14 @@ public final class McpToolAdapter implements Tool {
                 : "MCP Tool: " + mcpTool.name();
 
         String inputSchemaJson = normalizeInputSchema(mcpTool.inputSchema(), this.mapper);
+        RiskLevel resolvedRisk = riskLevel != null ? riskLevel : RiskLevel.READ_ONLY;
+        ToolSemantics resolvedSemantics = semantics != null ? semantics : ToolSemantics.defaultFor(resolvedRisk);
         this.definition = new ToolDefinition(
                 sdkToolName,
                 description,
                 inputSchemaJson,
-                riskLevel != null ? riskLevel : RiskLevel.READ_ONLY
+                resolvedRisk,
+                resolvedSemantics
         );
     }
 

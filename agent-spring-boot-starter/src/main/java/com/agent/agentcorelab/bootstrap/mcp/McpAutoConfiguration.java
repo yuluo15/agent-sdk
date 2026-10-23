@@ -16,6 +16,7 @@ import com.agent.agentcorelab.mcp.transport.StdioProcessTransport;
 import com.agent.agentcorelab.tool.RiskLevel;
 import com.agent.agentcorelab.tool.Tool;
 import com.agent.agentcorelab.tool.ToolCatalog;
+import com.agent.agentcorelab.tool.ToolSemantics;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
@@ -29,6 +30,7 @@ import org.springframework.context.annotation.Bean;
 import java.io.File;
 import java.time.Duration;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -141,6 +143,17 @@ public class McpAutoConfiguration {
                 if (!config.getHighRiskTools().isEmpty()) {
                     Set<String> highRisk = Set.copyOf(config.getHighRiskTools());
                     bridgeBuilder.riskResolver(name -> (highRisk.contains(name) || highRisk.contains(prefix + name)) ? RiskLevel.HIGH_RISK : RiskLevel.READ_ONLY);
+                }
+                if (!config.getToolSemantics().isEmpty()) {
+                    Map<String, ToolSemantics> semanticsMap = new LinkedHashMap<>();
+                    config.getToolSemantics().forEach((k, v) -> semanticsMap.put(k, v.toToolSemantics()));
+                    bridgeBuilder.semanticsResolver(name -> {
+                        ToolSemantics s = semanticsMap.get(name);
+                        if (s == null && !prefix.isEmpty()) {
+                            s = semanticsMap.get(prefix + name);
+                        }
+                        return s;
+                    });
                 }
 
                 McpServerBridge bridge = bridgeBuilder.build();

@@ -1,5 +1,7 @@
 package com.agent.agentcorelab.bootstrap.mcp;
 
+import com.agent.agentcorelab.tool.SemanticHint;
+import com.agent.agentcorelab.tool.ToolSemantics;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 import java.util.ArrayList;
@@ -197,6 +199,20 @@ public class AgentMcpProperties {
             this.highRiskTools = highRiskTools;
         }
 
+        /**
+         * Host override semantics for specific MCP tools.
+         * Key is tool name (or prefixed tool name), value is the configured governance semantics.
+         */
+        private Map<String, ToolSemanticsConfig> toolSemantics = new LinkedHashMap<>();
+
+        public Map<String, ToolSemanticsConfig> getToolSemantics() {
+            return toolSemantics;
+        }
+
+        public void setToolSemantics(Map<String, ToolSemanticsConfig> toolSemantics) {
+            this.toolSemantics = toolSemantics;
+        }
+
         public int getTimeoutSeconds() {
             return timeoutSeconds;
         }
@@ -243,6 +259,54 @@ public class AgentMcpProperties {
 
         public void setUseOfficialSdk(boolean useOfficialSdk) {
             this.useOfficialSdk = useOfficialSdk;
+        }
+    }
+
+    public static class ToolSemanticsConfig {
+        private String readOnly;
+        private String destructive;
+        private String idempotent;
+        private String openWorld;
+
+        public String getReadOnly() {
+            return readOnly;
+        }
+
+        public void setReadOnly(String readOnly) {
+            this.readOnly = readOnly;
+        }
+
+        public String getDestructive() {
+            return destructive;
+        }
+
+        public void setDestructive(String destructive) {
+            this.destructive = destructive;
+        }
+
+        public String getIdempotent() {
+            return idempotent;
+        }
+
+        public void setIdempotent(String idempotent) {
+            this.idempotent = idempotent;
+        }
+
+        public String getOpenWorld() {
+            return openWorld;
+        }
+
+        public void setOpenWorld(String openWorld) {
+            this.openWorld = openWorld;
+        }
+
+        public ToolSemantics toToolSemantics() {
+            return new ToolSemantics(
+                    SemanticHint.parse(readOnly),
+                    SemanticHint.parse(destructive),
+                    SemanticHint.parse(idempotent),
+                    SemanticHint.parse(openWorld)
+            );
         }
     }
 }

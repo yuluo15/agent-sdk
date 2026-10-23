@@ -82,7 +82,7 @@ flowchart TD
 | **01** | **P0** | **文档事实对齐与勘误** | `README.md`<br>`CHANGELOG.md`<br>`SpringAiModelGateway.java` | **✅ 已完成** | 修正外溢阈值实测为 16384 字节（删除 2KB 虚标）；消除“毫秒级冷启动”等浮夸词汇；客观说明流式与多会话真实状态。 |
 | **02** | **P0** | **建立本地与 CI 构建门禁** | `.github/workflows/ci.yml`<br>`verify.ps1` | **✅ 已完成** | 配置 GitHub Actions 工作流与本地一键预检，锁定 JDK 21 编译与 100% 测试通过门禁，杜绝凭证泄漏。 |
 | **--** | **已归档** | **P0/P1/P2 历史基础加固** | `agent-core`<br>`agent-mcp-adapter` | **✅ 已完成** | 涵盖原任务 01–10（MCP 弹性容错、Token 加权、模型有限重试、事件语义、产物校验、SessionRunnerManager、waitingTimeout、目标修订原子重建、官方 MCP Java SDK 0.17.1、SKILL.md 标准解析）。 |
-| **03** | **P1** | **工具标准治理语义扩展** | `ToolSemantics.java`<br>`ToolDefinition.java` | **⏳ 待开始** | 引入 `SemanticHint` 三态（`YES/NO/UNKNOWN`）声明 `readOnly`、`destructive`、`idempotent`、`openWorld`；宿主支持对外部 MCP 工具强制覆盖防篡改。 |
+| **03** | **P1** | **工具标准治理语义扩展** | `ToolSemantics.java`<br>`ToolDefinition.java` | **✅ 已完成** | 引入 `SemanticHint` 三态（`YES/NO/UNKNOWN`）声明 `readOnly`、`destructive`、`idempotent`、`openWorld`；`@AgentTool` 支持声明治理语义；宿主支持对外部 MCP 工具强制覆盖防篡改；318 个用例 100% 通过。 |
 | **04** | **P1** | **可信上下文（TrustedContext）注入** | `TrustedContext.java`<br>`RunRequest.java`<br>`ToolContext.java` | **⏳ 待开始** | 宿主安全注入租户 `tenantId`、主体 `userPrincipal`、权限集 `scopes` 与 `traceId`，只读载体设计，模型与参数不可伪造。 |
 | **05** | **P1** | **双阶段策略执行引擎（ToolPolicy SPI）** | `ToolPolicy.java`<br>`DefaultAgentRunner.java` | **⏳ 待开始** | 执行前 `beforeExecute`（`ALLOW / DENY / REQUIRE_APPROVAL`）；执行后出域保护 `afterExecute`（`ALLOW_OUTPUT / REDACT / DENY_OUTPUT`）。 |
 | **06** | **P1** | **防篡改与防重放审批绑定** | `ApprovalBinding.java`<br>`ApprovalRequest.java` | **⏳ 待开始** | 强绑定申请人、审批角色、租户、工具名/callId、参数 SHA-256 哈希、TTL 与单次使用令牌；执行前二次比对参数与权限。 |
@@ -129,29 +129,19 @@ flowchart TD
 ### 🔵 P1 梯次：最小治理闭环（MGK v0，核心差异化护城河）
 
 #### 任务 03：工具标准治理语义（ToolSemantics）
-* **涉及代码**：`com.agent.agentcorelab.tool.ToolSemantics`、`ToolDefinition`
+* **状态**：`✅ 已完成`
+* **涉及代码**：[`ToolSemantics.java`](file:///D:/agent/agent-sdk/agent-core/src/main/java/com/agent/agentcorelab/tool/ToolSemantics.java)、[`SemanticHint.java`](file:///D:/agent/agent-sdk/agent-core/src/main/java/com/agent/agentcorelab/tool/SemanticHint.java)、[`ToolDefinition.java`](file:///D:/agent/agent-sdk/agent-core/src/main/java/com/agent/agentcorelab/tool/ToolDefinition.java)、[`ToolCatalog.java`](file:///D:/agent/agent-sdk/agent-core/src/main/java/com/agent/agentcorelab/tool/ToolCatalog.java)、[`OverriddenTool.java`](file:///D:/agent/agent-sdk/agent-core/src/main/java/com/agent/agentcorelab/tool/OverriddenTool.java)、[`AgentTool.java`](file:///D:/agent/agent-sdk/agent-core/src/main/java/com/agent/agentcorelab/tool/annotation/AgentTool.java)、[`AnnotatedTool.java`](file:///D:/agent/agent-sdk/agent-core/src/main/java/com/agent/agentcorelab/tool/annotation/AnnotatedTool.java)、[`McpToolAdapter.java`](file:///D:/agent/agent-sdk/agent-mcp-adapter/src/main/java/com/agent/agentcorelab/mcp/adapter/McpToolAdapter.java)、[`McpServerBridge.java`](file:///D:/agent/agent-sdk/agent-mcp-adapter/src/main/java/com/agent/agentcorelab/mcp/adapter/McpServerBridge.java)、[`McpAutoConfiguration.java`](file:///D:/agent/agent-sdk/agent-spring-boot-starter/src/main/java/com/agent/agentcorelab/bootstrap/mcp/McpAutoConfiguration.java)
 * **现状缺陷**：工具元数据仅有简单的 `RiskLevel` 枚举，缺少国际标准的治理语义（如是否只读、是否具有破坏性写、是否幂等、是否访问不可控外部世界）。
-* **实施方案**：
-  1. 引入三态语义枚举：
-     ```java
-     public enum SemanticHint { YES, NO, UNKNOWN }
-     ```
-  2. 定义标准语义载体：
-     ```java
-     public record ToolSemantics(
-         SemanticHint readOnly,
-         SemanticHint destructive,
-         SemanticHint idempotent,
-         SemanticHint openWorld
-     ) {
-         public static ToolSemantics readOnlySafe() {
-             return new ToolSemantics(SemanticHint.YES, SemanticHint.NO, SemanticHint.YES, SemanticHint.NO);
-         }
-     }
-     ```
-  3. 在 `ToolDefinition` 中聚合 `ToolSemantics`；
-  4. **宿主覆盖机制**：针对外部 MCP 工具自称的语义，宿主系统支持显式规则覆盖（例如强制将自称 readOnly 的不可信工具重设为 `destructive=YES` 或 `openWorld=YES`）。
-* **验收标准**：单测覆盖工具语义声明、MCP 适配器映射以及宿主强制覆写生效。
+* **实施方案与交付成果**：
+  1. 引入三态语义枚举 `SemanticHint`（`YES`, `NO`, `UNKNOWN`），支持安全解析与布尔转换；
+  2. 定义标准语义载体 `ToolSemantics`（`readOnly`, `destructive`, `idempotent`, `openWorld`），提供 `readOnlySafe()`, `destructiveAction()`, `idempotentAction()` 等标准工厂与非破坏性合并 `overrideWith`；
+  3. `ToolDefinition` 深度聚合 `ToolSemantics`，保持 3 参数与 4 参数历史构造器 100% 向后兼容；
+  4. `@AgentTool` 注解新增 `readOnly`, `destructive`, `idempotent`, `openWorld` 声明能力，由 `AnnotatedTool` 自动映射；
+  5. **宿主强覆盖机制**：
+     - `ToolCatalog.withSemanticsOverrides(...)` 支持宿主按工具名覆写语义，通过 `OverriddenTool` 保持委托执行；
+     - `McpServerBridge` 支持 `semanticsResolver` 与 `semanticsOverride`，宿主系统对不可信外部 MCP 声明享有最高覆盖权；
+     - `AgentMcpProperties` 支持通过 Spring Boot YAML 配置 `tool-semantics` 覆写。
+* **验收结果**：全量测试套件 318 个用例 100% 绿色通过，0 凭证泄漏，覆盖声明、解析、MCP 桥接与宿主强制覆写。
 
 #### 任务 04：可信上下文（TrustedContext）注入
 * **涉及代码**：`com.agent.agentcorelab.agent.context.TrustedContext`、`RunRequest`、`ToolContext`

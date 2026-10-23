@@ -4,6 +4,7 @@ import com.agent.agentcorelab.mcp.client.McpClient;
 import com.agent.agentcorelab.mcp.protocol.McpTool;
 import com.agent.agentcorelab.tool.RiskLevel;
 import com.agent.agentcorelab.tool.Tool;
+import com.agent.agentcorelab.tool.ToolSemantics;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.util.ArrayList;
@@ -27,6 +28,7 @@ public final class McpServerBridge implements AutoCloseable {
     private final String toolPrefix;
     private final Predicate<String> toolFilter;
     private final Function<String, RiskLevel> riskResolver;
+    private final Function<String, ToolSemantics> semanticsResolver;
     private final ObjectMapper mapper;
 
     private final Map<String, Tool> bridgedTools = new ConcurrentHashMap<>();
@@ -37,6 +39,7 @@ public final class McpServerBridge implements AutoCloseable {
         this.toolPrefix = builder.toolPrefix;
         this.toolFilter = builder.toolFilter != null ? builder.toolFilter : name -> true;
         this.riskResolver = builder.riskResolver != null ? builder.riskResolver : name -> RiskLevel.READ_ONLY;
+        this.semanticsResolver = builder.semanticsResolver;
         this.mapper = builder.mapper;
     }
 
@@ -87,7 +90,8 @@ public final class McpServerBridge implements AutoCloseable {
         for (McpTool remoteTool : remoteTools) {
             if (toolFilter.test(remoteTool.name())) {
                 RiskLevel risk = riskResolver.apply(remoteTool.name());
-                McpToolAdapter adapter = new McpToolAdapter(client, remoteTool, toolPrefix, risk, mapper);
+                ToolSemantics semantics = semanticsResolver != null ? semanticsResolver.apply(remoteTool.name()) : null;
+                McpToolAdapter adapter = new McpToolAdapter(client, remoteTool, toolPrefix, risk, semantics, mapper);
                 bridgedTools.put(adapter.definition().name(), adapter);
             }
         }
@@ -128,6 +132,7 @@ public final class McpServerBridge implements AutoCloseable {
         private String toolPrefix;
         private Predicate<String> toolFilter;
         private Function<String, RiskLevel> riskResolver;
+        private Function<String, ToolSemantics> semanticsResolver;
         private ObjectMapper mapper;
 
         private Builder(McpClient client) {
@@ -160,6 +165,19 @@ public final class McpServerBridge implements AutoCloseable {
 
         public Builder riskResolver(Function<String, RiskLevel> riskResolver) {
             this.riskResolver = riskResolver;
+            return this;
+        }
+
+        public Builder semanticsResolver(Function<String, ToolSemantics> semanticsResolver) {
+            this.semanticsResolver = semanticsResolver;
+            return this;
+        }
+
+        public Builder semanticsOverride(String toolName, ToolSemantics semantics) {
+            if (toolName != null && semantics != null) {
+                Function<String, ToolSemantics> prev = this.semanticsResolver;
+                this.semanticsResolver = name -> toolName.equals(name) ? semantics : (prev != null ? prev.apply(name) : null);
+            }
             return this;
         }
 
