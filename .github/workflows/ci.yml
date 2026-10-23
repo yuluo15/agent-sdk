@@ -1,0 +1,44 @@
+name: Agent SDK CI Gate
+
+on:
+  push:
+    branches: [ master, main ]
+  pull_request:
+    branches: [ master, main ]
+
+jobs:
+  verify:
+    name: Build & Verify (JDK 21)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: maven
+
+      - name: Security Pre-Scan (Secret & Credential Checks)
+        run: |
+          echo "Scanning for hardcoded secrets / API keys..."
+          if grep -rn --exclude-dir={.git,target,.idea} -E 'sk-[a-zA-Z0-9]{32,}' . ; then
+            echo "::error::Found potential unmasked OpenAI API key in repository!"
+            exit 1
+          fi
+          echo "Secret check passed: No unmasked API keys detected."
+
+      - name: Maven Build & Unit/Integration Tests
+        run: mvn -B clean verify --file pom.xml
+
+      - name: Upload Test Results (if any failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: surefire-reports
+          path: '**/target/surefire-reports/'

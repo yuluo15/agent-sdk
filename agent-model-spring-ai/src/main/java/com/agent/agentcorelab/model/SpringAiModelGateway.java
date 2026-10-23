@@ -35,7 +35,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.function.Consumer;
 
-/** A non-streaming, one-request adapter. Only the Runner owns tool execution and iteration. */
+/** Model gateway adapter supporting both SSE token streaming and one-shot responses. Only the Runner owns tool execution and iteration. */
 public final class SpringAiModelGateway implements ModelGateway {
     private static final ObjectMapper JSON = new ObjectMapper();
     private final String apiKey;
