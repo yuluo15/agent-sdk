@@ -63,4 +63,25 @@ public @interface AgentTool {
      * Defaults to {@link SemanticHint#UNKNOWN}.
      */
     SemanticHint openWorld() default SemanticHint.UNKNOWN;
+
+    /**
+     * Logical domain or subsystem classification (e.g., "order", "finance", "ops").
+     * Defaults to "default".
+     */
+    String domain() default "default";
+
+    /**
+     * Categorization tags for discovery and bulk catalog assembly (e.g., "readonly", "query", "mcp").
+     */
+    String[] tags() default {};
+
+    /**
+     * Minimum caller role or scope required to assemble or execute this tool (empty if unconstrained).
+     */
+    String requiredRole() default "";
+
+    /**
+     * Specific tenant IDs permitted to assemble or invoke this tool (empty if global to all tenants).
+     */
+    String[] allowedTenants() default {};
 }

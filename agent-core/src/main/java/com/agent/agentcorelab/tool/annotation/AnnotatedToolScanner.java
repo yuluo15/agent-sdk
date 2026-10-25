@@ -1,5 +1,6 @@
 package com.agent.agentcorelab.tool.annotation;
 
+import com.agent.agentcorelab.tool.CandidateTool;
 import com.agent.agentcorelab.tool.Tool;
 
 import java.lang.reflect.Method;
@@ -84,5 +85,25 @@ public final class AnnotatedToolScanner {
 
         combined.sort(Comparator.comparing(t -> t.definition().name()));
         return List.copyOf(combined);
+    }
+
+    /**
+     * Scans target and returns candidate tool descriptors with metadata for pool registration.
+     */
+    public static List<CandidateTool> scanCandidates(Object target) {
+        return scan(target).stream()
+                .filter(AnnotatedTool.class::isInstance)
+                .map(t -> ((AnnotatedTool) t).toCandidate())
+                .toList();
+    }
+
+    /**
+     * Scans multiple targets and returns candidate tool descriptors for pool registration.
+     */
+    public static List<CandidateTool> scanAllCandidates(Object... targets) {
+        return scanAll(targets).stream()
+                .filter(AnnotatedTool.class::isInstance)
+                .map(t -> ((AnnotatedTool) t).toCandidate())
+                .toList();
     }
 }

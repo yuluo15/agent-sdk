@@ -3,6 +3,7 @@ package com.agent.agentcorelab.tool.annotation;
 import com.agent.agentcorelab.agent.context.TrustedContext;
 
 import com.agent.agentcorelab.tool.ActiveTimeExceededException;
+import com.agent.agentcorelab.tool.CandidateTool;
 import com.agent.agentcorelab.tool.RiskLevel;
 import com.agent.agentcorelab.tool.SemanticHint;
 import com.agent.agentcorelab.tool.Tool;
@@ -34,6 +35,7 @@ public final class AnnotatedTool implements Tool {
     private final Method method;
     private final ToolDefinition definition;
     private final List<ParamDescriptor> descriptors;
+    private final CandidateTool candidate;
 
     public AnnotatedTool(Object target, Method method) {
         this.target = Objects.requireNonNull(target, "target");
@@ -93,6 +95,19 @@ public final class AnnotatedTool implements Tool {
             }
         }
         this.descriptors = List.copyOf(params);
+
+        String domain = annotation.domain() != null && !annotation.domain().isBlank() ? annotation.domain().trim() : "default";
+        Set<String> tags = annotation.tags() != null ? Set.of(annotation.tags()) : Set.of();
+        String requiredRole = annotation.requiredRole() != null ? annotation.requiredRole().trim() : "";
+        Set<String> allowedTenants = annotation.allowedTenants() != null ? Set.of(annotation.allowedTenants()) : Set.of();
+        this.candidate = new CandidateTool(this, domain, tags, requiredRole, allowedTenants, true);
+    }
+
+    /**
+     * Returns the candidate tool descriptor for pool registration and least-privilege assembly.
+     */
+    public CandidateTool toCandidate() {
+        return candidate;
     }
 
     @Override

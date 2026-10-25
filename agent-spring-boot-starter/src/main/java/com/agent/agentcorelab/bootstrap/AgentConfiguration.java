@@ -12,7 +12,12 @@ import io.micrometer.core.instrument.MeterRegistry;
 import com.agent.agentcorelab.model.ModelGateway;
 import com.agent.agentcorelab.scenario.ScenarioPlugin;
 import com.agent.agentcorelab.scenario.ScenarioRegistry;
+import com.agent.agentcorelab.tool.CandidateTool;
+import com.agent.agentcorelab.tool.Tool;
+import com.agent.agentcorelab.tool.ToolCandidatePool;
 import com.agent.agentcorelab.tool.ToolCatalog;
+import com.agent.agentcorelab.tool.ToolDefinition;
+import java.util.Set;
 import com.agent.agentcorelab.trace.AuditTrailSpi;
 import com.agent.agentcorelab.trace.CompositeRunEventSink;
 import com.agent.agentcorelab.trace.JsonlRunEventSink;
@@ -38,6 +43,30 @@ public class AgentConfiguration {
     @ConditionalOnMissingBean(ScenarioRegistry.class)
     public ScenarioRegistry scenarioRegistry(ObjectProvider<ScenarioPlugin> plugins, AgentProperties properties) {
         return new ScenarioRegistry(plugins.orderedStream().toList(), properties.limits());
+    }
+
+    @Bean
+    @ConditionalOnMissingBean(ToolCandidatePool.class)
+    public ToolCandidatePool toolCandidatePool(ObjectProvider<Tool> singleToolsProvider,
+                                               ObjectProvider<List<Tool>> toolListsProvider,
+                                               ObjectProvider<CandidateTool> candidateToolsProvider,
+                                               ObjectProvider<List<CandidateTool>> candidateListsProvider,
+                                               ObjectProvider<ScenarioRegistry> scenarioRegistryProvider) {
+        ToolCandidatePool pool = ToolCandidatePool.create();
+        scenarioRegistryProvider.ifAvailable(scenarios -> {
+            for (ToolDefinition def : scenarios.tools().definitions()) {
+                pool.register(CandidateTool.of(scenarios.tools().require(def.name()), "scenario", Set.of("scenario")));
+            }
+        });
+        candidateToolsProvider.orderedStream().forEach(pool::register);
+        candidateListsProvider.orderedStream().forEach(list -> {
+            if (list != null) list.forEach(pool::register);
+        });
+        singleToolsProvider.orderedStream().forEach(pool::register);
+        toolListsProvider.orderedStream().forEach(list -> {
+            if (list != null) list.forEach(pool::register);
+        });
+        return pool;
     }
 
     @Bean
@@ -97,6 +126,7 @@ public class AgentConfiguration {
     @ConditionalOnBean(ModelGateway.class)
     @ConditionalOnMissingBean(AgentRunnerFactory.class)
     public AgentRunnerFactory agentRunnerFactory(ModelGateway model, ToolCatalog tools, RunEventSink events,
+                                                 ObjectProvider<ToolCandidatePool> candidatePoolProvider,
                                                  ObjectProvider<RunEventListener> listenersProvider,
                                                  ObjectProvider<ConversationMemory> memoryProvider,
                                                  ObjectProvider<com.agent.agentcorelab.memory.UserProfileMemory> userProfileProvider,
@@ -107,13 +137,15 @@ public class AgentConfiguration {
                 com.agent.agentcorelab.memory.InMemoryUserProfileMemory::new);
         AuditTrailSpi auditTrail = auditTrailProvider.getIfAvailable(AuditTrailSpi::noop);
         CheckpointSpi checkpointStore = checkpointStoreProvider.getIfAvailable(CheckpointSpi::noop);
+        ToolCandidatePool candidatePool = candidatePoolProvider.getIfAvailable(tools::toCandidatePool);
         List<RunEventListener> listeners = listenersProvider.orderedStream().toList();
         RunEventSink effectiveEvents = events;
         if (!listeners.isEmpty() && !(events instanceof CompositeRunEventSink)) {
             effectiveEvents = new CompositeRunEventSink(events, listeners);
         }
         RunEventSink finalEvents = effectiveEvents;
-        return () -> new DefaultAgentRunner(model, tools, finalEvents, memory, profiles, auditTrail, checkpointStore);
+        return () -> new DefaultAgentRunner(model, tools, candidatePool, finalEvents, memory, profiles, System::nanoTime,
+                DefaultAgentRunner.DEFAULT_MAX_ACTIVE_RUNS, auditTrail, checkpointStore);
     }
 
     @Bean

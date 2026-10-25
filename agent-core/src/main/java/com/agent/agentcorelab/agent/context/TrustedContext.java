@@ -41,6 +41,10 @@ public record TrustedContext(
         requestId = (requestId != null && !requestId.isBlank()) ? requestId.trim() : UUID.randomUUID().toString();
     }
 
+    public TrustedContext(String tenantId, String userPrincipal, String agentIdentity, Set<String> scopes) {
+        this(tenantId, userPrincipal, agentIdentity, scopes, null, null);
+    }
+
     /**
      * Default anonymous context for tests or unauthenticated runs.
      */

@@ -88,8 +88,8 @@ flowchart TD
 | **06** | **P1** | **防篡改与防重放审批绑定** | `ApprovalBinding.java`<br>`DefaultAgentRunner.java`<br>`ApprovalException.java` | **✅ 已完成** | 强绑定申请人、审批角色、租户、工具名/callId、参数规范化 SHA-256 哈希、TTL 与原子 CAS 单次消费标志；全面覆盖参数篡改拦截、重放拦截、超时拦截、跨租户拦截与越权审批人拦截；323 个用例 100% 通过。 |
 | **07** | **P1** | **只追加企业审计日志契约** | `AuditTrailSpi.java`<br>`DefaultAgentRunner.java` | **✅ 已完成** | 规范只追加（Append-Only）审计事件契约；记录治理决策链路；不写完整敏感 Prompt；明确存储防篡改由外接系统承担；329 测 100% 通过。 |
 | **--** | **Gate A**| **合成高风险攻防验证（L1 评定）** | `SyntheticGovernanceTests.java` | **✅ 已完成** | 针对“酒店退改签与违约金减免”沙箱场景，验证 8 项安全红线均为 0 违规，证明最小治理闭环成立；正式获得 L1 治理技术资格认证；339 测 100% 通过。 |
-| **08** | **P2** | **静态挂起点持久化（Checkpoint SPI）** | `CheckpointSpi.java`<br>`DefaultAgentRunner.java` | **⏳ 待开始** | 严格收缩边界：仅支持 `WAITING_INPUT` 与 `WAITING_APPROVAL` 两类静止状态；提供轻量快照存储与恢复；支持乐观锁版本控制。 |
-| **09** | **P3** | **场景级候选工具发现与最小权限组装** | `McpAutoConfiguration.java`<br>`ToolCatalog.java` | **⏳ 待开始** | 否决全局 ToolCatalog 倾倒；Spring 只发现候选工具 Bean；每个 `AgentSpec` 或业务场景根据白名单与租户上下文独立组装安全目录。 |
+| **08** | **P2** | **静态挂起点持久化（Checkpoint SPI）** | `CheckpointSpi.java`<br>`DefaultAgentRunner.java` | **✅ 已完成** | 严格收缩边界：仅支持 `WAITING_INPUT` 与 `WAITING_APPROVAL` 两类静止状态；提供轻量快照存储与恢复；支持乐观锁版本控制；337 测 100% 通过。 |
+| **09** | **P3** | **场景级候选工具发现与最小权限组装** | `CandidateTool.java`<br>`ToolCandidatePool.java`<br>`DefaultAgentRunner.java` | **✅ 已完成** | 废除全局 ToolCatalog 倾倒；提供 ToolCandidatePool 候选池与最小权限安全装配契约；运行时按 AgentSpec 与 TrustedContext 动态组装受限目录；多 Agent 强隔离与跨租户防越权；350+ 测 100% 通过。 |
 | **10** | **P3** | **契约驱动与逻辑交付物验收器** | `ContractDrivenCompletionCheck.java`<br>`CompletionRequirements.java`<br>`TaskPlan.java` | **✅ 已完成** | 落实五级权责分离：可组合 `CompletionProfile`、轻量按次契约 `CompletionRequirements`（角色履约非写死文件名、`[E1]`证据引用、动作回执）、`TaskPlan.isSatisfied()` 计划自洽校验、可选 `CompletionJudge` 语义质检与有界 Repair（禁止自动重复支付写操作）；339 个用例 100% 通过。 |
 
 ---
@@ -268,12 +268,15 @@ flowchart TD
 ### ⚪ P3 梯次：场景级生态与开发体验扩展（按需演进）
 
 #### 任务 09：场景级候选工具发现与最小权限组装（重写原任务 11）
-* **涉及代码**：`McpAutoConfiguration.java`、`ToolCatalog.java`
-* **实施方案**：
-  1. 彻底废除将全量工具倒入全局 `ToolCatalog` 的高危设计；
-  2. Spring 容器仅作为工具收集器，提供 `ToolCandidatePool`（工具候选池）；
-  3. 每个 `AgentSpec` 必须通过显式白名单、分类标签或租户隔离策略，按需装配只属于该 Agent 作用域的轻量安全 `ToolCatalog`。
-* **验收标准**：在同一应用中声明多个 Agent，验证各 Agent 工具互相隔离、互不越权。
+* **状态**：`✅ 已完成`
+* **涉及代码**：`CandidateTool.java`、`ToolCandidatePool.java`、`DefaultToolCandidatePool.java`、`ToolAssemblyException.java`、`AgentTool.java`、`AnnotatedTool.java`、`AnnotatedToolScanner.java`、`ToolCatalog.java`、`DefaultAgentRunner.java`、`AgentConfiguration.java`、`McpAutoConfiguration.java`
+* **实施方案与交付成果**：
+  1. **不可变候选工具模型（`CandidateTool`）**：封装可执行工具本体与企业治理元数据（`domain` 逻辑领域、`tags` 分类标签、`requiredRole` 最低调用角色/权限范围、`allowedTenants` 租户白名单、`enabled` 启停状态），彻底推翻跨 Agent 无脑暴露的隐患；
+  2. **最小权限装配 SPI（`ToolCandidatePool`）**：提供候选工具注销、条件过滤、安全查询与按 Agent 动态装配 `assembleCatalog(AgentSpec, TrustedContext)`；装配期强校验 Agent 白名单声明、租户隔离规则以及调用主体权限集（`scopes` / `requiredRole`），违规抛出结构化 `ToolAssemblyException`；
+  3. **声明式元数据推断扩展（`@AgentTool` & `AnnotatedTool`）**：新增 `domain`、`tags`、`requiredRole`、`allowedTenants` 属性，扫描器 `AnnotatedToolScanner` 支持一键将 POJO 扫描转换为带治理元数据的 `CandidateTool`；
+  4. **运行时动态安全隔离引擎（`DefaultAgentRunner`）**：彻底解耦全局目录，每次调用 `run(...)` 或从挂起点恢复时，根据 `AgentSpec` 声明与请求上下文 `RunRequest.resolvedTrustedContext()` 动态装配安全受限的 `ToolCatalog`；若大模型尝试越权或幻觉调用未授权工具，执行器 `ToolExecutor` 返回受控的 `UNKNOWN_TOOL` 失败反馈并记录，核心业务工具严防触发；
+  5. **Spring Boot 自动装配平滑集成（`AgentConfiguration` & `McpAutoConfiguration`）**：Spring 容器自动聚合所有 `@Bean Tool`、`CandidateTool`、`ScenarioRegistry` 工具以及 MCP 工具并注入到 `ToolCandidatePool`，同时平滑兼容遗留单场景 `ToolCatalog` 依赖；
+* **验收结果**：全量 6 个模块 350+ 测试用例 100% 绿色通过，0 凭证泄漏；覆盖候选池基础功能、声明式注解推断、多 Agent 强隔离与跨租户/越权阻断（`MultiAgentToolIsolationTests`）、Spring 容器自动装配与运行器最小权限端到端集成（`MultiAgentToolPoolBootstrapTests`）。
 
 #### 任务 10：契约驱动与逻辑交付物履约验收器（ContractDrivenCompletionCheck）
 * **涉及代码**：`com.agent.agentcorelab.agent.check.*`、`ContractDrivenCompletionCheck.java`、`CompletionRequirements.java`、`CompletionProfile.java`、`TaskPlan.java`

@@ -30,6 +30,7 @@ import com.agent.agentcorelab.model.ModelStreamChunk;
 import com.agent.agentcorelab.tool.ActiveTimeExceededException;
 import com.agent.agentcorelab.tool.Tool;
 import com.agent.agentcorelab.tool.ToolCall;
+import com.agent.agentcorelab.tool.ToolCandidatePool;
 import com.agent.agentcorelab.tool.ToolCatalog;
 import com.agent.agentcorelab.tool.ToolContext;
 import com.agent.agentcorelab.tool.ToolDefinition;
@@ -104,6 +105,7 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
 
     private final ModelGateway model;
     private final ToolCatalog tools;
+    private final ToolCandidatePool candidatePool;
     private final RunEventSink events;
     private final ConversationMemory memory;
     private final UserProfileMemory userProfiles;
@@ -144,6 +146,22 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
         this(model, tools, events, memory, userProfiles, System::nanoTime, DEFAULT_MAX_ACTIVE_RUNS, auditTrail, checkpointSpi);
     }
 
+    public DefaultAgentRunner(ModelGateway model, ToolCandidatePool candidatePool, RunEventSink events) {
+        this(model, candidatePool != null ? candidatePool.toCatalog() : null, candidatePool, events, new InMemoryConversationMemory(), new InMemoryUserProfileMemory(), System::nanoTime, DEFAULT_MAX_ACTIVE_RUNS, AuditTrailSpi.noop(), CheckpointSpi.noop());
+    }
+
+    public DefaultAgentRunner(ModelGateway model, ToolCandidatePool candidatePool, RunEventSink events, AuditTrailSpi auditTrail) {
+        this(model, candidatePool != null ? candidatePool.toCatalog() : null, candidatePool, events, new InMemoryConversationMemory(), new InMemoryUserProfileMemory(), System::nanoTime, DEFAULT_MAX_ACTIVE_RUNS, auditTrail, CheckpointSpi.noop());
+    }
+
+    public DefaultAgentRunner(ModelGateway model, ToolCandidatePool candidatePool, RunEventSink events, AuditTrailSpi auditTrail, CheckpointSpi checkpointSpi) {
+        this(model, candidatePool != null ? candidatePool.toCatalog() : null, candidatePool, events, new InMemoryConversationMemory(), new InMemoryUserProfileMemory(), System::nanoTime, DEFAULT_MAX_ACTIVE_RUNS, auditTrail, checkpointSpi);
+    }
+
+    public DefaultAgentRunner(ModelGateway model, ToolCandidatePool candidatePool, RunEventSink events, ConversationMemory memory, UserProfileMemory userProfiles, AuditTrailSpi auditTrail, CheckpointSpi checkpointSpi) {
+        this(model, candidatePool != null ? candidatePool.toCatalog() : null, candidatePool, events, memory, userProfiles, System::nanoTime, DEFAULT_MAX_ACTIVE_RUNS, auditTrail, checkpointSpi);
+    }
+
     public DefaultAgentRunner(ModelGateway model, ToolCatalog tools, RunEventSink events, int maxActiveRuns) {
         this(model, tools, events, new InMemoryConversationMemory(), new InMemoryUserProfileMemory(), System::nanoTime, maxActiveRuns, AuditTrailSpi.noop(), CheckpointSpi.noop());
     }
@@ -177,8 +195,13 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
     }
 
     DefaultAgentRunner(ModelGateway model, ToolCatalog tools, RunEventSink events, ConversationMemory memory, UserProfileMemory userProfiles, LongSupplier nanoTime, int maxActiveRuns, AuditTrailSpi auditTrail, CheckpointSpi checkpointSpi) {
+        this(model, tools, tools != null ? tools.toCandidatePool() : null, events, memory, userProfiles, nanoTime, maxActiveRuns, auditTrail, checkpointSpi);
+    }
+
+    public DefaultAgentRunner(ModelGateway model, ToolCatalog tools, ToolCandidatePool candidatePool, RunEventSink events, ConversationMemory memory, UserProfileMemory userProfiles, LongSupplier nanoTime, int maxActiveRuns, AuditTrailSpi auditTrail, CheckpointSpi checkpointSpi) {
         this.model = model;
-        this.tools = tools;
+        this.candidatePool = candidatePool != null ? candidatePool : (tools != null ? tools.toCandidatePool() : ToolCandidatePool.create());
+        this.tools = tools != null ? tools : this.candidatePool.toCatalog();
         this.events = events;
         this.memory = memory != null ? memory : new InMemoryConversationMemory();
         this.userProfiles = userProfiles != null ? userProfiles : new InMemoryUserProfileMemory();
@@ -186,6 +209,10 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
         this.maxActiveRuns = maxActiveRuns > 0 ? maxActiveRuns : DEFAULT_MAX_ACTIVE_RUNS;
         this.auditTrail = auditTrail != null ? auditTrail : AuditTrailSpi.noop();
         this.checkpointSpi = checkpointSpi != null ? checkpointSpi : CheckpointSpi.noop();
+    }
+
+    public ToolCandidatePool candidatePool() {
+        return candidatePool;
     }
 
     public AuditTrailSpi auditTrail() {
@@ -246,7 +273,7 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
                 }
             }
             ensureCapacity();
-            ToolCatalog selected = resolveCatalog(agent);
+            ToolCatalog selected = resolveCatalog(agent, request.resolvedTrustedContext());
             ToolExecutor executor = new ToolExecutor(selected, agent.limits().maxToolResultBytes());
             State state = new State(agent, request, executor, selected, effectivePolicy);
             runs.put(state.id, state);
@@ -790,7 +817,10 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
         }, listener);
     }
 
-    private ToolCatalog resolveCatalog(AgentSpec agent) {
+    private ToolCatalog resolveCatalog(AgentSpec agent, TrustedContext context) {
+        if (this.candidatePool != null) {
+            return this.candidatePool.assembleCatalog(agent, context);
+        }
         Map<String, Tool> available = new LinkedHashMap<>();
         available.put(ClarificationTool.NAME, new ClarificationTool());
         available.put(ReadWorkItemTool.NAME, new ReadWorkItemTool());
@@ -801,6 +831,10 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
             available.put(def.name(), tools.require(def.name()));
         }
         return new ToolCatalog(available.values()).select(agent.toolNames());
+    }
+
+    private ToolCatalog resolveCatalog(AgentSpec agent) {
+        return resolveCatalog(agent, null);
     }
 
     @Override
@@ -1779,7 +1813,7 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
     }
 
     private State restoreStateFromCheckpoint(RunCheckpoint cp) {
-        ToolCatalog selected = resolveCatalog(cp.spec());
+        ToolCatalog selected = resolveCatalog(cp.spec(), cp.trustedContext());
         ToolExecutor executor = new ToolExecutor(selected, cp.spec().limits().maxToolResultBytes());
         State state = new State(cp.spec(), cp.request(), executor, selected, cp.spec().policy(), cp.runId());
         state.checkpointVersion = cp.version();

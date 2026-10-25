@@ -13,6 +13,7 @@ import com.agent.agentcorelab.mcp.skill.SkillRegistry;
 import com.agent.agentcorelab.mcp.transport.InMemoryMcpTransport;
 import com.agent.agentcorelab.mcp.transport.McpTransport;
 import com.agent.agentcorelab.mcp.transport.StdioProcessTransport;
+import com.agent.agentcorelab.tool.CandidateTool;
 import com.agent.agentcorelab.tool.RiskLevel;
 import com.agent.agentcorelab.tool.Tool;
 import com.agent.agentcorelab.tool.ToolCatalog;
@@ -172,5 +173,15 @@ public class McpAutoConfiguration {
     @ConditionalOnMissingBean(name = "mcpTools")
     public List<Tool> mcpTools(McpServerManager mcpServerManager) {
         return mcpServerManager.allTools();
+    }
+
+    @Bean
+    @ConditionalOnMissingBean(name = "mcpCandidateTools")
+    public List<CandidateTool> mcpCandidateTools(McpServerManager mcpServerManager) {
+        List<CandidateTool> candidates = new java.util.ArrayList<>();
+        for (Tool tool : mcpServerManager.allTools()) {
+            candidates.add(CandidateTool.of(tool, "mcp", java.util.Set.of("mcp", "remote")));
+        }
+        return candidates;
     }
 }
