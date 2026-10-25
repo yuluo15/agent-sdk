@@ -3,6 +3,8 @@ package com.agent.agentcorelab.agent;
 import com.agent.agentcorelab.agent.approval.ApprovalBinding;
 import com.agent.agentcorelab.agent.approval.ApprovalException;
 import com.agent.agentcorelab.agent.context.TrustedContext;
+import com.agent.agentcorelab.checkpoint.CheckpointSpi;
+import com.agent.agentcorelab.checkpoint.RunCheckpoint;
 import com.agent.agentcorelab.agent.plan.TaskBrief;
 import com.agent.agentcorelab.agent.plan.TaskPlan;
 import com.agent.agentcorelab.agent.plan.TaskStep;
@@ -108,60 +110,73 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
     private final LongSupplier nanoTime;
     private final int maxActiveRuns;
     private final AuditTrailSpi auditTrail;
+    private final CheckpointSpi checkpointSpi;
     private final ReentrantLock owner = new ReentrantLock();
     private final Map<UUID, State> runs = new ConcurrentHashMap<>();
     private volatile State current;
     private volatile boolean closed;
 
     public DefaultAgentRunner(ModelGateway model, ToolCatalog tools, RunEventSink events) {
-        this(model, tools, events, new InMemoryConversationMemory(), new InMemoryUserProfileMemory(), System::nanoTime, DEFAULT_MAX_ACTIVE_RUNS, AuditTrailSpi.noop());
+        this(model, tools, events, new InMemoryConversationMemory(), new InMemoryUserProfileMemory(), System::nanoTime, DEFAULT_MAX_ACTIVE_RUNS, AuditTrailSpi.noop(), CheckpointSpi.noop());
     }
 
     public DefaultAgentRunner(ModelGateway model, ToolCatalog tools, RunEventSink events, AuditTrailSpi auditTrail) {
-        this(model, tools, events, new InMemoryConversationMemory(), new InMemoryUserProfileMemory(), System::nanoTime, DEFAULT_MAX_ACTIVE_RUNS, auditTrail);
+        this(model, tools, events, new InMemoryConversationMemory(), new InMemoryUserProfileMemory(), System::nanoTime, DEFAULT_MAX_ACTIVE_RUNS, auditTrail, CheckpointSpi.noop());
+    }
+
+    public DefaultAgentRunner(ModelGateway model, ToolCatalog tools, RunEventSink events, AuditTrailSpi auditTrail, CheckpointSpi checkpointSpi) {
+        this(model, tools, events, new InMemoryConversationMemory(), new InMemoryUserProfileMemory(), System::nanoTime, DEFAULT_MAX_ACTIVE_RUNS, auditTrail, checkpointSpi);
     }
 
     public DefaultAgentRunner(ModelGateway model, ToolCatalog tools, RunEventSink events, ConversationMemory memory) {
-        this(model, tools, events, memory, new InMemoryUserProfileMemory(), System::nanoTime, DEFAULT_MAX_ACTIVE_RUNS, AuditTrailSpi.noop());
+        this(model, tools, events, memory, new InMemoryUserProfileMemory(), System::nanoTime, DEFAULT_MAX_ACTIVE_RUNS, AuditTrailSpi.noop(), CheckpointSpi.noop());
     }
 
     public DefaultAgentRunner(ModelGateway model, ToolCatalog tools, RunEventSink events, ConversationMemory memory, UserProfileMemory userProfiles) {
-        this(model, tools, events, memory, userProfiles, System::nanoTime, DEFAULT_MAX_ACTIVE_RUNS, AuditTrailSpi.noop());
+        this(model, tools, events, memory, userProfiles, System::nanoTime, DEFAULT_MAX_ACTIVE_RUNS, AuditTrailSpi.noop(), CheckpointSpi.noop());
     }
 
     public DefaultAgentRunner(ModelGateway model, ToolCatalog tools, RunEventSink events, ConversationMemory memory, UserProfileMemory userProfiles, AuditTrailSpi auditTrail) {
-        this(model, tools, events, memory, userProfiles, System::nanoTime, DEFAULT_MAX_ACTIVE_RUNS, auditTrail);
+        this(model, tools, events, memory, userProfiles, System::nanoTime, DEFAULT_MAX_ACTIVE_RUNS, auditTrail, CheckpointSpi.noop());
+    }
+
+    public DefaultAgentRunner(ModelGateway model, ToolCatalog tools, RunEventSink events, ConversationMemory memory, UserProfileMemory userProfiles, AuditTrailSpi auditTrail, CheckpointSpi checkpointSpi) {
+        this(model, tools, events, memory, userProfiles, System::nanoTime, DEFAULT_MAX_ACTIVE_RUNS, auditTrail, checkpointSpi);
     }
 
     public DefaultAgentRunner(ModelGateway model, ToolCatalog tools, RunEventSink events, int maxActiveRuns) {
-        this(model, tools, events, new InMemoryConversationMemory(), new InMemoryUserProfileMemory(), System::nanoTime, maxActiveRuns, AuditTrailSpi.noop());
+        this(model, tools, events, new InMemoryConversationMemory(), new InMemoryUserProfileMemory(), System::nanoTime, maxActiveRuns, AuditTrailSpi.noop(), CheckpointSpi.noop());
     }
 
     public DefaultAgentRunner(ModelGateway model, ToolCatalog tools, RunEventSink events, ConversationMemory memory, int maxActiveRuns) {
-        this(model, tools, events, memory, new InMemoryUserProfileMemory(), System::nanoTime, maxActiveRuns, AuditTrailSpi.noop());
+        this(model, tools, events, memory, new InMemoryUserProfileMemory(), System::nanoTime, maxActiveRuns, AuditTrailSpi.noop(), CheckpointSpi.noop());
     }
 
     public DefaultAgentRunner(ModelGateway model, ToolCatalog tools, RunEventSink events, ConversationMemory memory, UserProfileMemory userProfiles, int maxActiveRuns) {
-        this(model, tools, events, memory, userProfiles, System::nanoTime, maxActiveRuns, AuditTrailSpi.noop());
+        this(model, tools, events, memory, userProfiles, System::nanoTime, maxActiveRuns, AuditTrailSpi.noop(), CheckpointSpi.noop());
     }
 
     DefaultAgentRunner(ModelGateway model, ToolCatalog tools, RunEventSink events, LongSupplier nanoTime) {
-        this(model, tools, events, new InMemoryConversationMemory(), new InMemoryUserProfileMemory(), nanoTime, DEFAULT_MAX_ACTIVE_RUNS, AuditTrailSpi.noop());
+        this(model, tools, events, new InMemoryConversationMemory(), new InMemoryUserProfileMemory(), nanoTime, DEFAULT_MAX_ACTIVE_RUNS, AuditTrailSpi.noop(), CheckpointSpi.noop());
     }
 
     DefaultAgentRunner(ModelGateway model, ToolCatalog tools, RunEventSink events, LongSupplier nanoTime, int maxActiveRuns) {
-        this(model, tools, events, new InMemoryConversationMemory(), new InMemoryUserProfileMemory(), nanoTime, maxActiveRuns, AuditTrailSpi.noop());
+        this(model, tools, events, new InMemoryConversationMemory(), new InMemoryUserProfileMemory(), nanoTime, maxActiveRuns, AuditTrailSpi.noop(), CheckpointSpi.noop());
     }
 
     DefaultAgentRunner(ModelGateway model, ToolCatalog tools, RunEventSink events, ConversationMemory memory, LongSupplier nanoTime, int maxActiveRuns) {
-        this(model, tools, events, memory, new InMemoryUserProfileMemory(), nanoTime, maxActiveRuns, AuditTrailSpi.noop());
+        this(model, tools, events, memory, new InMemoryUserProfileMemory(), nanoTime, maxActiveRuns, AuditTrailSpi.noop(), CheckpointSpi.noop());
     }
 
     DefaultAgentRunner(ModelGateway model, ToolCatalog tools, RunEventSink events, ConversationMemory memory, UserProfileMemory userProfiles, LongSupplier nanoTime, int maxActiveRuns) {
-        this(model, tools, events, memory, userProfiles, nanoTime, maxActiveRuns, AuditTrailSpi.noop());
+        this(model, tools, events, memory, userProfiles, nanoTime, maxActiveRuns, AuditTrailSpi.noop(), CheckpointSpi.noop());
     }
 
     DefaultAgentRunner(ModelGateway model, ToolCatalog tools, RunEventSink events, ConversationMemory memory, UserProfileMemory userProfiles, LongSupplier nanoTime, int maxActiveRuns, AuditTrailSpi auditTrail) {
+        this(model, tools, events, memory, userProfiles, nanoTime, maxActiveRuns, auditTrail, CheckpointSpi.noop());
+    }
+
+    DefaultAgentRunner(ModelGateway model, ToolCatalog tools, RunEventSink events, ConversationMemory memory, UserProfileMemory userProfiles, LongSupplier nanoTime, int maxActiveRuns, AuditTrailSpi auditTrail, CheckpointSpi checkpointSpi) {
         this.model = model;
         this.tools = tools;
         this.events = events;
@@ -170,10 +185,15 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
         this.nanoTime = nanoTime;
         this.maxActiveRuns = maxActiveRuns > 0 ? maxActiveRuns : DEFAULT_MAX_ACTIVE_RUNS;
         this.auditTrail = auditTrail != null ? auditTrail : AuditTrailSpi.noop();
+        this.checkpointSpi = checkpointSpi != null ? checkpointSpi : CheckpointSpi.noop();
     }
 
     public AuditTrailSpi auditTrail() {
         return auditTrail;
+    }
+
+    public CheckpointSpi checkpointStore() {
+        return checkpointSpi;
     }
 
     @Override
@@ -363,6 +383,9 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
                 state.resources.close();
             }
         }
+        if (this.checkpointSpi != null && this.checkpointSpi != CheckpointSpi.noop()) {
+            this.checkpointSpi.remove(runId);
+        }
     }
 
     @Override
@@ -406,6 +429,19 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
         state.lastAccessedAt = Instant.now();
         state.waitingStartedAtNanos = nanoTime.getAsLong();
         state.waitingTimingActive = true;
+        if (state.checkpointStore != null && state.checkpointStore != CheckpointSpi.noop()) {
+            state.checkpointVersion++;
+            RunCheckpoint cp = createCheckpoint(state);
+            state.checkpointStore.save(cp);
+            event(state, RunEvent.Type.CHECKPOINT_SAVED, Map.of(
+                    "runId", state.id.toString(),
+                    "status", state.status.name(),
+                    "version", state.checkpointVersion
+            ));
+            audit(state, AuditEvent.Action.CHECKPOINT_SAVED, b -> b
+                    .metadata("version", String.valueOf(state.checkpointVersion))
+                    .metadata("status", state.status.name()));
+        }
     }
 
     private void exitWaiting(State state) {
@@ -424,6 +460,7 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
 
     private RunResult doResume(State state, String answer, Consumer<RunStreamChunk> listener) {
         return drive(state, () -> {
+            ensureSessionActive(state);
             ToolCall call = state.pendingCall;
             exitWaiting(state);
             state.status = RunStatus.RUNNING;
@@ -481,6 +518,7 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
 
     private RunResult doApprove(State state, TrustedContext approverContext, Consumer<RunStreamChunk> listener) {
         return drive(state, () -> {
+            ensureSessionActive(state);
             ToolCall call = state.pendingHighRiskCall;
             List<ToolCall> calls = state.pendingHighRiskCalls;
             int index = state.pendingHighRiskIndex;
@@ -594,6 +632,7 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
 
     private RunResult doReject(State state, String rejectionReason, TrustedContext approverContext, Consumer<RunStreamChunk> listener) {
         return drive(state, () -> {
+            ensureSessionActive(state);
             ToolCall call = state.pendingHighRiskCall;
             List<ToolCall> calls = state.pendingHighRiskCalls;
             int index = state.pendingHighRiskIndex;
@@ -1497,6 +1536,13 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
             }
             if (!status.isWaiting()) {
                 exitWaiting(state);
+                if (state.checkpointStore != null && state.checkpointStore != CheckpointSpi.noop()) {
+                    state.checkpointStore.remove(state.id);
+                    event(state, RunEvent.Type.CHECKPOINT_REMOVED, Map.of(
+                            "runId", state.id.toString(),
+                            "finalStatus", status.name()
+                    ));
+                }
             }
             state.status = status;
             state.reason = reason;
@@ -1681,9 +1727,128 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
     private State require(UUID runId) {
         State state = runs.get(runId);
         if (state == null) {
+            if (this.checkpointSpi != null && this.checkpointSpi != CheckpointSpi.noop()) {
+                Optional<RunCheckpoint> cpOpt = this.checkpointSpi.findByRunId(runId);
+                if (cpOpt.isPresent()) {
+                    state = restoreStateFromCheckpoint(cpOpt.get());
+                    runs.put(state.id, state);
+                    this.current = state;
+                    event(state, RunEvent.Type.CHECKPOINT_RESTORED, Map.of(
+                            "runId", runId.toString(),
+                            "status", state.status.name(),
+                            "version", cpOpt.get().version()
+                    ));
+                    audit(state, AuditEvent.Action.CHECKPOINT_RESTORED, b -> b
+                            .metadata("version", String.valueOf(cpOpt.get().version()))
+                            .metadata("restoredStatus", cpOpt.get().status().name()));
+                    return state;
+                }
+            }
             throw new IllegalArgumentException("Unknown run; process restart recovery is not supported");
         }
         return state;
+    }
+
+    private RunCheckpoint createCheckpoint(State state) {
+        return new RunCheckpoint(
+                state.id,
+                state.checkpointVersion,
+                state.status,
+                Instant.now(),
+                state.spec.id(),
+                state.spec,
+                state.currentGoal,
+                state.request,
+                state.taskBrief,
+                state.taskPlan,
+                state.observations,
+                state.artifacts,
+                state.pending,
+                state.pendingApproval,
+                state.pendingBinding,
+                state.pendingHighRiskCall,
+                state.pendingHighRiskCalls,
+                state.pendingHighRiskIndex,
+                state.request.resolvedTrustedContext(),
+                metrics(state),
+                state.clarificationSubDialogueTurns,
+                state.corrections,
+                state.message,
+                Map.of("goalVersion", String.valueOf(state.taskBrief.goalVersion()))
+        );
+    }
+
+    private State restoreStateFromCheckpoint(RunCheckpoint cp) {
+        ToolCatalog selected = resolveCatalog(cp.spec());
+        ToolExecutor executor = new ToolExecutor(selected, cp.spec().limits().maxToolResultBytes());
+        State state = new State(cp.spec(), cp.request(), executor, selected, cp.spec().policy(), cp.runId());
+        state.checkpointVersion = cp.version();
+        state.status = cp.status();
+        state.currentGoal = cp.goal();
+        state.taskBrief = cp.taskBrief();
+        state.taskPlan = cp.taskPlan();
+        state.observations.addAll(cp.observations());
+        state.artifacts.addAll(cp.artifacts());
+        state.pending = cp.pendingQuestion();
+        state.pendingApproval = cp.pendingApproval();
+        state.pendingBinding = cp.pendingBinding();
+        state.pendingHighRiskCall = cp.pendingHighRiskCall();
+        state.pendingHighRiskCalls = cp.pendingHighRiskCalls() != null ? new ArrayList<>(cp.pendingHighRiskCalls()) : null;
+        state.pendingHighRiskIndex = cp.pendingHighRiskIndex();
+        state.clarificationSubDialogueTurns = cp.clarificationSubDialogueTurns();
+        state.corrections = cp.corrections();
+        state.message = cp.message();
+        state.waitingSince = cp.timestamp();
+        state.lastAccessedAt = Instant.now();
+        if (cp.metrics() != null) {
+            state.modelRequests = cp.metrics().modelRequests();
+            state.toolCalls = cp.metrics().toolCalls();
+            state.accumulatedNanos = cp.metrics().activeTime().toNanos();
+            state.modelNanos = cp.metrics().modelTime().toNanos();
+            state.toolNanos = cp.metrics().toolTime().toNanos();
+            state.waitingNanos = cp.metrics().waitingTime().toNanos();
+        }
+        publish(state);
+        return state;
+    }
+
+    private void ensureSessionActive(State state) {
+        if (state.resources == null) {
+            try {
+                state.resources = WorkspaceSession.restore(state.request.workspace(), state.id);
+                state.resources.setGoalVersion(state.taskBrief.goalVersion());
+            } catch (IOException e) {
+                throw new UncheckedIOException("Failed to re-initialize workspace session for run: " + state.id, e);
+            }
+        }
+        if (state.session != null) {
+            return;
+        }
+        String rules = state.policy.runtimeRules().orElse("");
+        String userPrompt = state.request.initialBrief().isPresent()
+                ? state.taskBrief.toPromptBlock() + "\n\nUser Request: " + state.request.goal()
+                : state.request.goal();
+        List<ChatMessage> history = state.request.conversationId()
+                .map(memory::getHistory)
+                .orElse(List.of());
+        String userProfileContext = state.request.userId()
+                .map(userProfiles::getProfile)
+                .filter(p -> !p.isEmpty())
+                .map(p -> {
+                    StringBuilder sb = new StringBuilder("\n\n【用户长期画像与偏好设置】\n");
+                    p.forEach((k, v) -> sb.append("- ").append(k).append(": ").append(v).append("\n"));
+                    return sb.toString();
+                })
+                .orElse("");
+        state.session = model.openSession(
+                rules + "\n" + state.spec.instructions() + userProfileContext,
+                history,
+                userPrompt,
+                state.catalog.definitions()
+        );
+        for (RunSnapshot.Observation obs : state.observations) {
+            state.session.appendToolResult(obs.call().callId(), obs.outcome());
+        }
     }
 
     private void acquire() {
@@ -1772,7 +1937,7 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
     }
 
     private final class State {
-        private final UUID id = UUID.randomUUID();
+        private final UUID id;
         private final AgentSpec spec;
         private final RunRequest request;
         private final ToolExecutor executor;
@@ -1828,6 +1993,9 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
         private final AtomicReference<Thread> runnerThread = new AtomicReference<>();
         private final AtomicReference<Thread> currentToolThread = new AtomicReference<>();
         private boolean released;
+        private final AuditTrailSpi auditTrail;
+        private final CheckpointSpi checkpointStore;
+        private long checkpointVersion = 0;
 
         private void abortActiveOperations() {
             ModelSession s = this.session;
@@ -1850,19 +2018,23 @@ public final class DefaultAgentRunner implements AgentRunner, AutoCloseable {
             return closed || cancelled.get() || request.cancellationRequested().getAsBoolean();
         }
 
-        private final AuditTrailSpi auditTrail;
-
-        private State(AgentSpec spec, RunRequest request, ToolExecutor executor, ToolCatalog catalog, ExecutionPolicy policy) {
+        private State(AgentSpec spec, RunRequest request, ToolExecutor executor, ToolCatalog catalog, ExecutionPolicy policy, UUID explicitId) {
+            this.id = explicitId != null ? explicitId : UUID.randomUUID();
             this.spec = spec;
             this.request = request;
             this.executor = executor;
             this.catalog = catalog;
             this.policy = policy;
             this.auditTrail = policy.auditTrail().orElse(DefaultAgentRunner.this.auditTrail != null ? DefaultAgentRunner.this.auditTrail : AuditTrailSpi.noop());
+            this.checkpointStore = policy.checkpointStore().orElse(DefaultAgentRunner.this.checkpointSpi != null ? DefaultAgentRunner.this.checkpointSpi : CheckpointSpi.noop());
             this.currentGoal = request.goal();
             this.taskBrief = request.initialBrief().orElseGet(() -> TaskBrief.of(request.goal()));
             this.taskPlan = TaskPlan.empty(this.taskBrief.goalVersion());
             publish(this);
+        }
+
+        private State(AgentSpec spec, RunRequest request, ToolExecutor executor, ToolCatalog catalog, ExecutionPolicy policy) {
+            this(spec, request, executor, catalog, policy, null);
         }
     }
 }

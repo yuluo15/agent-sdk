@@ -46,6 +46,8 @@ public record AuditEvent(
         TOOL_EXECUTED,
         OUTPUT_REDACTED,
         OUTPUT_BLOCKED,
+        CHECKPOINT_SAVED,
+        CHECKPOINT_RESTORED,
         RUN_FINISHED
     }
 

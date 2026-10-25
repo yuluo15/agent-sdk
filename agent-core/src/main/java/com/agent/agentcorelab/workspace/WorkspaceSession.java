@@ -63,6 +63,10 @@ public final class WorkspaceSession implements AutoCloseable {
     private boolean closed;
 
     public WorkspaceSession(Workspace workspace, UUID runId) throws IOException {
+        this(workspace, runId, false);
+    }
+
+    public WorkspaceSession(Workspace workspace, UUID runId, boolean allowExistingRunDirectory) throws IOException {
         Objects.requireNonNull(workspace, "workspace");
         this.runId = Objects.requireNonNull(runId, "runId");
         Path input = normalized(workspace.inputRoot());
@@ -88,10 +92,23 @@ public final class WorkspaceSession implements AutoCloseable {
         traceRoot = traces.toRealPath();
         assertSeparate(inputRoot, outputRoot, traceRoot);
         runOutput = outputRoot.resolve(runId.toString());
-        // Never reuse a previous run directory, including one left after a crash.
-        Files.createDirectory(runOutput);
+        if (allowExistingRunDirectory) {
+            if (Files.notExists(runOutput)) {
+                Files.createDirectory(runOutput);
+            }
+        } else {
+            // Never reuse a previous run directory, including one left after a crash.
+            Files.createDirectory(runOutput);
+        }
         Path workBase = outputRoot.getParent() != null ? outputRoot.getParent().resolve("work") : outputRoot.resolveSibling("work");
         workDirectory = workBase.resolve(runId.toString());
+    }
+
+    /**
+     * Rehydrates an existing workspace session during checkpoint recovery or process restart.
+     */
+    public static WorkspaceSession restore(Workspace workspace, UUID runId) throws IOException {
+        return new WorkspaceSession(workspace, runId, true);
     }
 
     public UUID runId() { return runId; }

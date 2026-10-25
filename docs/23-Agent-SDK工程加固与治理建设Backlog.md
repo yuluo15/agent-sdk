@@ -57,7 +57,7 @@ flowchart TD
     end
 
     subgraph P2["P2：挂起点持久化 (严格收缩边界)"]
-        T08["任务 08：WAITING 轻量快照与恢复 (Checkpoint SPI)"]
+        T08["✅ 任务 08：WAITING 轻量快照与恢复 (Checkpoint SPI)"]
     end
 
     subgraph P3["P3：场景级生态与开发体验扩展 (按需演进)"]
@@ -246,15 +246,22 @@ flowchart TD
 ### 🟣 P2 梯次：静态挂起点持久化（严格收缩边界）
 
 #### 任务 08：WAITING 挂起点轻量快照恢复（Checkpoint SPI）
-* **涉及代码**：`com.agent.agentcorelab.checkpoint.CheckpointSpi`、`DefaultAgentRunner`
+* **状态**：`✅ 已完成`
+* **涉及代码**：`com.agent.agentcorelab.checkpoint.*`、`DefaultAgentRunner`、`WorkspaceSession`、`AgentConfiguration`、`AuditEvent`、`RunEvent`
 * **边界红线**：**严禁承诺大模型正在网络流式推流中的中途请求恢复**。仅且只支持两种完全静止的挂起点：
   1. `WAITING_INPUT`（等待用户补充输入）；
   2. `WAITING_APPROVAL`（等待主管审批高危工具）。
-* **实施方案**：
-  1. 定义快照数据包：结构化保存会话历史、当前任务目标、`TaskBrief`、`TaskPlan`、未决审批绑定、`TrustedContext` 与指标快照；
-  2. 提供开箱即用的轻量接口 `CheckpointSpi` 与 JDBC 基础参考实现；
-  3. 引入行级版本号（`version`）支持乐观锁并发更新防脏写。
-* **验收标准**：模拟进程重启后从快照完美恢复挂起的审批任务并继续推进。
+* **实施方案与交付成果**：
+  1. **挂起点不可变快照模型（`RunCheckpoint`）**：严格校验只接受 `WAITING_INPUT` 与 `WAITING_APPROVAL` 静态结构化快照，拒绝 `RUNNING`/`COMPLETED`/`FAILED` 等活动或终态；完整保留目标、`TaskBrief`、`TaskPlan`、未决审批绑定、未决提问、`observations` 历史观察回放列表、指标与元数据；提供只读 `toSnapshot()` 供客户端在不锁定执行态下查询；
+  2. **只追加覆盖与乐观锁并发控制（`CheckpointSpi`）**：定义 `save`、`findByRunId`、`remove`、`findWaiting`，采用单调递增行级版本号（`version >= 1`），当版本不匹配时抛出 `CheckpointConcurrencyException` 防范脑裂并发覆盖；开箱提供 `noop()`、`InMemoryCheckpointStore` 与基于标准 SQL 的 `JdbcCheckpointStore`；
+  3. **沙箱恢复安全契约（`WorkspaceSession.restore`）**：维持常规构造器对旧运行目录复用的严防，同时新增显式受信恢复契约，支持进程重启恢复同一 `runId` 的沙箱目录；
+  4. **`DefaultAgentRunner` 进程重启透明恢复闭环**：
+     - 在 `enterWaiting` 时自动累加版本并原子持久化挂起点快照，记录 `CHECKPOINT_SAVED` 追踪与企业审计事件；
+     - 当内存无此任务时，在 `require(runId)` 中透明从 `checkpointSpi` 唤醒状态，按规则重新打开模型会话并完整回放历史工具观察记录，恢复后触发 `CHECKPOINT_RESTORED` 事件；
+     - 恢复后支持执行 `approve(...)`、`reject(...)`、`resume(...)` 或只读 `snapshot(...)`；
+     - 任务终态（`COMPLETED`、`STOPPED`、`FAILED`、`CANCELLED`）或 `closeRun` 时自动清理快照，并触发 `CHECKPOINT_REMOVED` 事件；
+  5. **Spring Boot 自动装配**：提供 `@ConditionalOnMissingBean(CheckpointSpi.class)` 默认挂载 `CheckpointSpi.noop()`，并在 `agentRunnerFactory` 中解耦注入。
+* **验收结果**：全量套件 337 个测试用例 100% 绿色通过，0 凭证泄漏，覆盖静止状态边界防守、乐观并发冲突拦截、`WAITING_APPROVAL` 审批恢复全闭环、`WAITING_INPUT` 恢复全闭环、审批驳回恢复全闭环、只读快照免加载查询及 JDBC 参考持久化。
 
 ---
 

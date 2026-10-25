@@ -1,5 +1,6 @@
 package com.agent.agentcorelab.agent.policy;
 
+import com.agent.agentcorelab.checkpoint.CheckpointSpi;
 import com.agent.agentcorelab.policy.ToolPolicy;
 import com.agent.agentcorelab.trace.AuditTrailSpi;
 
@@ -15,13 +16,15 @@ import java.util.Optional;
  * @param clarificationPolicy Strategy for handling non-tool text responses after clarification resumption
  * @param toolPolicy          Two-stage governance policy engine controlling tool authorization and output egress
  * @param auditTrail          Optional append-only enterprise audit trail SPI
+ * @param checkpointStore     Optional static checkpoint persistence SPI for WAITING resting states
  */
 public record ExecutionPolicy(
         ActiveTaskPolicy activeTaskPolicy,
         Optional<String> runtimeRules,
         ClarificationPolicy clarificationPolicy,
         ToolPolicy toolPolicy,
-        Optional<AuditTrailSpi> auditTrail
+        Optional<AuditTrailSpi> auditTrail,
+        Optional<CheckpointSpi> checkpointStore
 ) {
 
     /**
@@ -70,6 +73,17 @@ public record ExecutionPolicy(
         Objects.requireNonNull(clarificationPolicy, "clarificationPolicy");
         toolPolicy = toolPolicy != null ? toolPolicy : ToolPolicy.defaultPolicy();
         auditTrail = auditTrail != null ? auditTrail : Optional.empty();
+        checkpointStore = checkpointStore != null ? checkpointStore : Optional.empty();
+    }
+
+    public ExecutionPolicy(
+            ActiveTaskPolicy activeTaskPolicy,
+            Optional<String> runtimeRules,
+            ClarificationPolicy clarificationPolicy,
+            ToolPolicy toolPolicy,
+            Optional<AuditTrailSpi> auditTrail
+    ) {
+        this(activeTaskPolicy, runtimeRules, clarificationPolicy, toolPolicy, auditTrail, Optional.empty());
     }
 
     public ExecutionPolicy(
@@ -78,7 +92,7 @@ public record ExecutionPolicy(
             ClarificationPolicy clarificationPolicy,
             ToolPolicy toolPolicy
     ) {
-        this(activeTaskPolicy, runtimeRules, clarificationPolicy, toolPolicy, Optional.empty());
+        this(activeTaskPolicy, runtimeRules, clarificationPolicy, toolPolicy, Optional.empty(), Optional.empty());
     }
 
     public ExecutionPolicy(
@@ -86,7 +100,7 @@ public record ExecutionPolicy(
             Optional<String> runtimeRules,
             ClarificationPolicy clarificationPolicy
     ) {
-        this(activeTaskPolicy, runtimeRules, clarificationPolicy, ToolPolicy.defaultPolicy(), Optional.empty());
+        this(activeTaskPolicy, runtimeRules, clarificationPolicy, ToolPolicy.defaultPolicy(), Optional.empty(), Optional.empty());
     }
 
     public ExecutionPolicy(ActiveTaskPolicy activeTaskPolicy) {
@@ -121,22 +135,26 @@ public record ExecutionPolicy(
     }
 
     public ExecutionPolicy withActiveTaskPolicy(ActiveTaskPolicy newPolicy) {
-        return new ExecutionPolicy(newPolicy, this.runtimeRules, this.clarificationPolicy, this.toolPolicy, this.auditTrail);
+        return new ExecutionPolicy(newPolicy, this.runtimeRules, this.clarificationPolicy, this.toolPolicy, this.auditTrail, this.checkpointStore);
     }
 
     public ExecutionPolicy withRuntimeRules(String newRules) {
-        return new ExecutionPolicy(this.activeTaskPolicy, Optional.ofNullable(newRules), this.clarificationPolicy, this.toolPolicy, this.auditTrail);
+        return new ExecutionPolicy(this.activeTaskPolicy, Optional.ofNullable(newRules), this.clarificationPolicy, this.toolPolicy, this.auditTrail, this.checkpointStore);
     }
 
     public ExecutionPolicy withClarificationPolicy(ClarificationPolicy newClarificationPolicy) {
-        return new ExecutionPolicy(this.activeTaskPolicy, this.runtimeRules, newClarificationPolicy, this.toolPolicy, this.auditTrail);
+        return new ExecutionPolicy(this.activeTaskPolicy, this.runtimeRules, newClarificationPolicy, this.toolPolicy, this.auditTrail, this.checkpointStore);
     }
 
     public ExecutionPolicy withToolPolicy(ToolPolicy newToolPolicy) {
-        return new ExecutionPolicy(this.activeTaskPolicy, this.runtimeRules, this.clarificationPolicy, newToolPolicy, this.auditTrail);
+        return new ExecutionPolicy(this.activeTaskPolicy, this.runtimeRules, this.clarificationPolicy, newToolPolicy, this.auditTrail, this.checkpointStore);
     }
 
     public ExecutionPolicy withAuditTrail(AuditTrailSpi newAuditTrail) {
-        return new ExecutionPolicy(this.activeTaskPolicy, this.runtimeRules, this.clarificationPolicy, this.toolPolicy, Optional.ofNullable(newAuditTrail));
+        return new ExecutionPolicy(this.activeTaskPolicy, this.runtimeRules, this.clarificationPolicy, this.toolPolicy, Optional.ofNullable(newAuditTrail), this.checkpointStore);
+    }
+
+    public ExecutionPolicy withCheckpointStore(CheckpointSpi newCheckpointStore) {
+        return new ExecutionPolicy(this.activeTaskPolicy, this.runtimeRules, this.clarificationPolicy, this.toolPolicy, this.auditTrail, Optional.ofNullable(newCheckpointStore));
     }
 }

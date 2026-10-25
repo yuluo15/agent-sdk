@@ -5,6 +5,7 @@ import com.agent.agentcorelab.agent.AgentRunnerFactory;
 import com.agent.agentcorelab.agent.DefaultAgentRunner;
 import com.agent.agentcorelab.agent.DefaultSessionRunnerManager;
 import com.agent.agentcorelab.agent.SessionRunnerManager;
+import com.agent.agentcorelab.checkpoint.CheckpointSpi;
 import io.micrometer.core.instrument.FunctionCounter;
 import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -87,24 +88,32 @@ public class AgentConfiguration {
     }
 
     @Bean
+    @ConditionalOnMissingBean(CheckpointSpi.class)
+    public CheckpointSpi checkpointStore() {
+        return CheckpointSpi.noop();
+    }
+
+    @Bean
     @ConditionalOnBean(ModelGateway.class)
     @ConditionalOnMissingBean(AgentRunnerFactory.class)
     public AgentRunnerFactory agentRunnerFactory(ModelGateway model, ToolCatalog tools, RunEventSink events,
                                                  ObjectProvider<RunEventListener> listenersProvider,
                                                  ObjectProvider<ConversationMemory> memoryProvider,
                                                  ObjectProvider<com.agent.agentcorelab.memory.UserProfileMemory> userProfileProvider,
-                                                 ObjectProvider<AuditTrailSpi> auditTrailProvider) {
+                                                 ObjectProvider<AuditTrailSpi> auditTrailProvider,
+                                                 ObjectProvider<CheckpointSpi> checkpointStoreProvider) {
         ConversationMemory memory = memoryProvider.getIfAvailable(InMemoryConversationMemory::new);
         com.agent.agentcorelab.memory.UserProfileMemory profiles = userProfileProvider.getIfAvailable(
                 com.agent.agentcorelab.memory.InMemoryUserProfileMemory::new);
         AuditTrailSpi auditTrail = auditTrailProvider.getIfAvailable(AuditTrailSpi::noop);
+        CheckpointSpi checkpointStore = checkpointStoreProvider.getIfAvailable(CheckpointSpi::noop);
         List<RunEventListener> listeners = listenersProvider.orderedStream().toList();
         RunEventSink effectiveEvents = events;
         if (!listeners.isEmpty() && !(events instanceof CompositeRunEventSink)) {
             effectiveEvents = new CompositeRunEventSink(events, listeners);
         }
         RunEventSink finalEvents = effectiveEvents;
-        return () -> new DefaultAgentRunner(model, tools, finalEvents, memory, profiles, auditTrail);
+        return () -> new DefaultAgentRunner(model, tools, finalEvents, memory, profiles, auditTrail, checkpointStore);
     }
 
     @Bean
